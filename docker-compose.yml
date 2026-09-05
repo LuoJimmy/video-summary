@@ -1,0 +1,16 @@
+services:
+  video-summary:
+    build: .
+    image: video-summary:latest
+    ports:
+      - "${PORT:-8765}:8765"
+    environment:
+      DATA_DIR: /data
+      DOWNLOAD_DIR: /downloads
+      STATIC_DIR: /app/static
+      HF_HOME: /data/hf
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://127.0.0.1:8765,http://localhost:8765}
+    volumes:
+      - ${VIDEO_SUMMARY_DATA:-./data}:/data
+      - ${VIDEO_SUMMARY_DOWNLOADS:-./downloads}:/downloads

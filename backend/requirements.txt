@@ -1,0 +1,15 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+sqlalchemy==2.0.36
+pydantic==2.10.3
+pydantic-settings==2.6.1
+python-multipart==0.0.17
+httpx==0.28.1
+openai==1.57.4
+pytest==8.3.4
+respx==0.22.0
+faster-whisper==1.2.1
+imageio-ffmpeg==0.6.0
+zhconv==1.4.3
+pypinyin==0.55.0
+huggingface_hub>=0.34.0
