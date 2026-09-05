@@ -11,8 +11,8 @@
 ## 产品截图
 
 ![创建任务](http://my-images-space.oss-cn-shenzhen.aliyuncs.com/video-summay/ScreenShot_2026-09-05_104030_755.png)
-![任务详情](http://my-images-space.oss-cn-shenzhen.aliyuncs.com/video-summay/ScreenShot_2026-09-05_104445_168.png)
-![知识库](http://my-images-space.oss-cn-shenzhen.aliyuncs.com/video-summay/localhost_5173_knowledge.png)
+![任务详情](http://my-images-space.oss-cn-shenzhen.aliyuncs.com/video-summay/localhost_5173_knowledge.png)
+![知识库](http://my-images-space.oss-cn-shenzhen.aliyuncs.com/video-summay/ScreenShot_2026-09-05_104445_168.png)
 
 ## 环境
 
