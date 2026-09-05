@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { ArrowDown, ArrowUp } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,7 +48,15 @@ const filterTitle = ref("");
 const filterStatus = ref("");
 const filterDateFrom = ref("");
 const filterDateTo = ref("");
-const appliedFilters = ref({ title: "", status: "", dateFrom: "", dateTo: "" });
+const filterSortKey = ref("source_desc");
+const appliedFilters = ref({
+  title: "",
+  status: "",
+  dateFrom: "",
+  dateTo: "",
+  sort: "source",
+  order: "desc",
+});
 let timer: number | undefined;
 let clock: number | undefined;
 
@@ -89,6 +98,12 @@ function currentFilters() {
       : {}),
     ...(dateFrom ? { dateFrom } : {}),
     ...(dateTo ? { dateTo } : {}),
+    ...(appliedFilters.value.sort && appliedFilters.value.sort !== "source"
+      ? { sort: appliedFilters.value.sort }
+      : {}),
+    ...(appliedFilters.value.order && appliedFilters.value.order !== "desc"
+      ? { order: appliedFilters.value.order }
+      : {}),
   };
 }
 
@@ -112,6 +127,7 @@ function applyFilters() {
     status: filterStatus.value,
     dateFrom: filterDateFrom.value,
     dateTo: filterDateTo.value,
+    ...parseSortKey(filterSortKey.value),
   };
   page.value = 1;
   void loadJobs();
@@ -122,7 +138,15 @@ function resetFilters() {
   filterStatus.value = "";
   filterDateFrom.value = "";
   filterDateTo.value = "";
-  appliedFilters.value = { title: "", status: "", dateFrom: "", dateTo: "" };
+  filterSortKey.value = "source_desc";
+  appliedFilters.value = {
+    title: "",
+    status: "",
+    dateFrom: "",
+    dateTo: "",
+    sort: "source",
+    order: "desc",
+  };
   page.value = 1;
   void loadJobs();
 }
@@ -249,6 +273,22 @@ function setDomainId(value: string | null) {
 
 function setFilterStatus(value: string | null) {
   filterStatus.value = !value || value === "__all" ? "" : value;
+}
+
+function parseSortKey(value: string | null) {
+  const [sortRaw, orderRaw] = (value || "source_desc").split("_");
+  const sort =
+    sortRaw === "created" || sortRaw === "title" ? sortRaw : "source";
+  const order = orderRaw === "asc" ? "asc" : "desc";
+  return { sort, order };
+}
+
+function setFilterSort(value: string | null) {
+  const { sort, order } = parseSortKey(value);
+  filterSortKey.value = `${sort}_${order}`;
+  appliedFilters.value = { ...appliedFilters.value, sort, order };
+  page.value = 1;
+  void loadJobs();
 }
 
 onMounted(async () => {
@@ -385,6 +425,26 @@ onBeforeUnmount(() => {
             <SelectItem value="done">已完成</SelectItem>
             <SelectItem value="failed">失败</SelectItem>
             <SelectItem value="cancelled">已取消</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div class="field field-sort">
+        <Select
+          :model-value="filterSortKey"
+          @update:model-value="setFilterSort"
+        >
+          <SelectTrigger class="sort-trigger" aria-label="排序">
+            <ArrowDown v-if="filterSortKey.endsWith('_desc')" class="size-4" />
+            <ArrowUp v-else class="size-4" />
+            <SelectValue placeholder="排序" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="source_desc">原片时间 降序</SelectItem>
+            <SelectItem value="source_asc">原片时间 升序</SelectItem>
+            <SelectItem value="created_desc">任务时间 降序</SelectItem>
+            <SelectItem value="created_asc">任务时间 升序</SelectItem>
+            <SelectItem value="title_desc">标题名称 降序</SelectItem>
+            <SelectItem value="title_asc">标题名称 升序</SelectItem>
           </SelectContent>
         </Select>
       </div>

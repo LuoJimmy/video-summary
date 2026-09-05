@@ -122,6 +122,18 @@ describe("任务列表筛选", () => {
     expect(el.querySelector("input[aria-label='开始日期']")).toBeTruthy();
     expect(el.querySelector("input[aria-label='结束日期']")).toBeTruthy();
     expect(el.querySelector(".job-filters [aria-label='状态']")).toBeTruthy();
+    const sortTrigger = el.querySelector(
+      ".job-filters [aria-label='排序']"
+    ) as HTMLElement | null;
+    expect(sortTrigger).toBeTruthy();
+    expect(sortTrigger?.querySelector("svg")).toBeTruthy();
+    expect(sortTrigger?.classList.contains("sort-trigger")).toBe(true);
+    expect(
+      el.querySelector(".job-filters [aria-label='排序方向']")
+    ).toBeFalsy();
+    expect(el.querySelector(".job-filters")?.textContent).toContain(
+      "原片时间 降序"
+    );
     expect(el.querySelector(".job-filters")?.textContent).toContain("查询");
     expect(el.querySelector(".job-filters")?.textContent).toContain("重置");
     expect(el.querySelector(".pager")?.textContent).not.toContain("清除筛选");

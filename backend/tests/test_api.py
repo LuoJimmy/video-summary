@@ -212,6 +212,28 @@ def test_list_jobs_filtered(client, db_session):
     assert by_title["total"] == 2
     assert {item["title"] for item in by_title["items"]} == {"卖票方法", "处理中的卖票"}
 
+    listed = client.get("/api/jobs", params={"page_size": 100}).json()
+    assert listed["items"][0]["title"] == "低吸条件"
+    assert {item["title"] for item in listed["items"][1:]} == {"卖票方法", "已取消", "处理中的卖票"}
+    by_created = client.get("/api/jobs", params={"sort": "created", "page_size": 100}).json()
+    assert by_created["items"][-1]["title"] == "处理中的卖票"
+    assert {item["title"] for item in by_created["items"][:3]} == {"已取消", "低吸条件", "卖票方法"}
+    by_created_asc = client.get(
+        "/api/jobs", params={"sort": "created", "order": "asc", "page_size": 100}
+    ).json()
+    assert by_created_asc["items"][0]["title"] == "处理中的卖票"
+    by_title = client.get("/api/jobs", params={"sort": "title", "order": "asc", "page_size": 100}).json()
+    assert [item["title"] for item in by_title["items"]] == ["低吸条件", "卖票方法", "处理中的卖票", "已取消"]
+    by_title_desc = client.get("/api/jobs", params={"sort": "title", "page_size": 100}).json()
+    assert [item["title"] for item in by_title_desc["items"]] == ["已取消", "处理中的卖票", "卖票方法", "低吸条件"]
+    by_source_asc = client.get("/api/jobs", params={"order": "asc", "page_size": 100}).json()
+    assert by_source_asc["items"][-1]["title"] == "低吸条件"
+    assert {item["title"] for item in by_source_asc["items"][:3]} == {"卖票方法", "已取消", "处理中的卖票"}
+    invalid_sort = client.get("/api/jobs", params={"sort": "nope"})
+    assert invalid_sort.status_code == 422
+    invalid_order = client.get("/api/jobs", params={"order": "nope"})
+    assert invalid_order.status_code == 422
+
     by_status = client.get("/api/jobs", params={"status": "failed"}).json()
     assert [item["title"] for item in by_status["items"]] == ["低吸条件"]
 

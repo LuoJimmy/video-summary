@@ -236,6 +236,8 @@ export const api = {
       status?: string;
       dateFrom?: string;
       dateTo?: string;
+      sort?: string;
+      order?: string;
     } = {}
   ) => {
     const params = new URLSearchParams({
@@ -246,6 +248,8 @@ export const api = {
     if (filters.status) params.set("status", filters.status);
     if (filters.dateFrom) params.set("date_from", filters.dateFrom);
     if (filters.dateTo) params.set("date_to", filters.dateTo);
+    if (filters.sort) params.set("sort", filters.sort);
+    if (filters.order) params.set("order", filters.order);
     return request<JobList>(`/api/jobs?${params}`);
   },
   job: (id: string) => request<Job>(`/api/jobs/${id}`),

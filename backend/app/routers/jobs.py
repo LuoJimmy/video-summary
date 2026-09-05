@@ -25,6 +25,8 @@ from app.services.sourcetime import file_created_at, parse_source_datetime
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 JobStatusFilter = Literal["pending", "running", "done", "failed", "cancelled", "active"]
+JobSort = Literal["source", "created", "title"]
+JobOrder = Literal["asc", "desc"]
 
 
 def _naive_utc(value: datetime) -> datetime:
@@ -38,6 +40,20 @@ def _title_pattern(keyword: str) -> str:
     return f"%{escaped}%"
 
 
+def _jobs_order(sort: JobSort | None, order: JobOrder | None = None):
+    descending = order != "asc"
+    stamp = func.coalesce(Job.source_created_at, Job.created_at)
+
+    def directed(column):
+        return column.desc() if descending else column.asc()
+
+    if sort == "created":
+        return directed(Job.created_at), Job.id.desc()
+    if sort == "title":
+        return directed(Job.title), stamp.desc(), Job.id.desc()
+    return directed(stamp), Job.created_at.desc(), Job.id.desc()
+
+
 def _jobs_query(
     db: Session,
     *,
@@ -45,6 +61,8 @@ def _jobs_query(
     status: JobStatusFilter | None,
     date_from: datetime | None,
     date_to: datetime | None,
+    sort: JobSort | None = None,
+    order: JobOrder | None = None,
 ) -> SAQuery:
     query = db.query(Job)
     keyword = (title or "").strip()
@@ -59,7 +77,7 @@ def _jobs_query(
         query = query.filter(stamp >= _naive_utc(date_from))
     if date_to is not None:
         query = query.filter(stamp < _naive_utc(date_to))
-    return query
+    return query.order_by(*_jobs_order(sort, order))
 
 
 def _enqueue(job_id: str) -> None:
@@ -83,13 +101,18 @@ def list_jobs(
     status: JobStatusFilter | None = Query(None),
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
+    sort: JobSort = Query("source"),
+    order: JobOrder = Query("desc"),
     db: Session = Depends(get_db),
 ) -> JobListOut:
-    filtered = _jobs_query(db, title=title, status=status, date_from=date_from, date_to=date_to)
+    filtered = _jobs_query(
+        db, title=title, status=status, date_from=date_from, date_to=date_to, sort=sort, order=order
+    )
     total = filtered.with_entities(func.count(Job.id)).scalar() or 0
     rows = (
-        _jobs_query(db, title=title, status=status, date_from=date_from, date_to=date_to)
-        .order_by(Job.created_at.desc())
+        _jobs_query(
+            db, title=title, status=status, date_from=date_from, date_to=date_to, sort=sort, order=order
+        )
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()

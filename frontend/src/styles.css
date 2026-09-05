@@ -564,9 +564,33 @@ h3 {
 .job-filters .field-status {
   width: 8.5rem;
 }
+.job-filters .field-sort {
+  display: flex;
+  width: auto;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
 .job-filters .field-title [data-slot="input"],
 .job-filters .field-status [data-slot="select-trigger"] {
   width: 100%;
+}
+.job-filters .sort-trigger {
+  width: auto;
+  height: 2.25rem;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  padding-inline: var(--space-2);
+  color: var(--muted);
+}
+.job-filters .sort-trigger:hover,
+.job-filters .sort-trigger:focus-visible {
+  background: var(--chip);
+  color: var(--text);
+}
+.job-filters .sort-trigger > :last-child {
+  display: none;
 }
 .job-filters .date-range {
   display: flex;
