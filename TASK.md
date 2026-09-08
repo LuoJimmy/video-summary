@@ -95,3 +95,12 @@ Implementation Checklist:
 实现与最终计划一致：多站点 + 登录档案打通、界面可配、本地/直链/HLS/站点页接入、总结时间轴由分段索引回填。未做站点 DRM 破解与未授权拉流。自动测试已通过。2026-09-04 起内容领域可配置，默认 A 股盘面课。
 
 Implementation perfectly matches the final plan.
+
+* 2026-09-08
+  * Step: 修复约牛原片时间缺失（startTs）
+  * Modifications: backend/app/services/sourcetime.py, backend/tests/test_sourcetime.py, backend/tests/test_ingest.py；回填 job cee9fea3aeb546c998949d79acd35068.source_created_at
+  * Change Summary: 识别约牛 toDetailSimple 的 startTs 字段；已有任务补写原片时间
+  * Reason: 任务详情不显示原片时间
+  * Blockers: None
+  * User Confirmation Status: Pending Confirmation
+

@@ -16,6 +16,8 @@ SOURCE_TIME_KEYS = (
     "zb_start_time",
     "liveStartTime",
     "live_start_time",
+    "startTs",
+    "start_ts",
     "startTime",
     "createTime",
     "created_at",

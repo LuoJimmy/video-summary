@@ -171,6 +171,44 @@ def test_yueniu_official_replay_to_m3u8():
 
 
 @respx.mock
+def test_yueniu_reads_start_ts_as_source_time():
+    page = "https://jf.yueniuzq.com/living/?id=2cd1f1838b0c122fb50ba1e318d9a907"
+    respx.get("https://jf.yueniuzq.com/headGetUserInfo.json").mock(
+        return_value=Response(200, json={"muser_webUserId": "119560085"})
+    )
+    respx.get("https://jflive.yueniuzq.com/api/live/toDetailSimple").mock(
+        return_value=Response(
+            200,
+            json={
+                "code": 0,
+                "message": "成功",
+                "result": {
+                    "liveName": "第142轮：20260907——20260911题材梳理课：",
+                    "liveStatus": 3,
+                    "vipStatus": False,
+                    "authorId": "119311606",
+                    "startTs": 1788695842,
+                    "videoPlayUrl": [{"name": "高清", "type": "HD", "fileId": "5001"}],
+                },
+            },
+        )
+    )
+    respx.get("https://jf.yueniuzq.com/api/live/playerSign").mock(
+        return_value=Response(200, json={"code": 0, "result": {"sign": "aaa.bbb.ccc"}})
+    )
+    respx.get("https://playvideo.qcloud.com/getplayinfo/v4/1500034639/5001").mock(
+        return_value=Response(
+            200,
+            json={"media": {"basicInfo": {"duration": 120}, "originalInfo": {"url": "https://jfvod.example.com/a.m3u8"}}},
+        )
+    )
+    resolved = YueniuAdapter().resolve(page, RequestAuth(cookie="_xx_ppt_token=abc; SESSION=def"))
+    assert resolved.created_at is not None
+    local = resolved.created_at.astimezone(ZoneInfo("Asia/Shanghai"))
+    assert (local.year, local.month, local.day, local.hour, local.minute) == (2026, 9, 6, 19, 57)
+
+
+@respx.mock
 def test_yueniu_reports_api_error_when_room_missing():
     page = "https://jf.yueniuzq.com/living/?id=de558de121c4fb5a1dca352c5a78a5d"
     respx.get("https://jf.yueniuzq.com/headGetUserInfo.json").mock(
