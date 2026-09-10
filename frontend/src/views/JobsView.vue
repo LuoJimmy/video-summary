@@ -320,17 +320,8 @@ onBeforeUnmount(() => {
   <p class="sub">
     支持本地文件、线上视频、HLS、B 站，以及已配置登录态的站点页面。
   </p>
-
   <section class="card">
     <div class="grid two">
-      <div class="field">
-        <Label>视频作者</Label>
-        <Input v-model="author" placeholder="可选" />
-      </div>
-      <div class="field">
-        <Label>标题（可选）</Label>
-        <Input v-model="title" />
-      </div>
       <div class="field">
         <Label>页面或媒体地址</Label>
         <Input
@@ -344,6 +335,14 @@ onBeforeUnmount(() => {
           v-model="mediaOverride"
           placeholder="登录后从 Network 复制的流地址"
         />
+      </div>
+      <div class="field">
+        <Label>标题（可选）</Label>
+        <Input v-model="title" />
+      </div>
+      <div class="field">
+        <Label>视频作者（可选）</Label>
+        <Input v-model="author" />
       </div>
       <div class="field">
         <Label>指定站点（可留空自动匹配）</Label>
