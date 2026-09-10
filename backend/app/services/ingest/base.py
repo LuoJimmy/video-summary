@@ -16,6 +16,7 @@ class ResolvedMedia:
     adapter: str
     source_type: str
     title: str = ""
+    author: str = ""
     media_url: str = ""
     page_url: str = ""
     needs_media_url: bool = False

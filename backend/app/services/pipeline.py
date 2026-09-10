@@ -323,6 +323,7 @@ class Pipeline:
             resolved = resolve_media(source, auth, media_url_override=job.media_url_override)
             source_created_at = job.source_created_at or resolved.created_at or pick_source_datetime(resolved.extra)
             title = job.title or resolved.title or "未命名任务"
+            author = (job.author or "").strip() or (resolved.author or "").strip()
             if resolved.needs_media_url or not resolved.media_url:
                 raise RuntimeError(resolved.message or "无法解析媒体地址，请填写媒体地址覆盖")
             timer.stop("resolving")
@@ -333,6 +334,7 @@ class Pipeline:
                 db,
                 job,
                 title=title,
+                author=author,
                 source_type=resolved.source_type,
                 source_created_at=source_created_at,
                 media_url=resolved.media_url,

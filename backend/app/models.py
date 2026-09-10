@@ -59,6 +59,7 @@ class Job(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(255), default="")
+    author: Mapped[str] = mapped_column(String(120), default="")
     source_url: Mapped[str] = mapped_column(Text, default="")
     source_type: Mapped[str] = mapped_column(String(32), default="unknown")
     site_id: Mapped[str | None] = mapped_column(ForeignKey("sites.id"), nullable=True)

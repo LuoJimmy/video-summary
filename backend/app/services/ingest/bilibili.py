@@ -6,6 +6,7 @@ import httpx
 from app.services.authctx import RequestAuth, http_headers
 from app.services.httpclient import http_client
 from app.services.ingest.base import ResolvedMedia, SiteAdapter, classify_direct_url
+from app.services.sourceauthor import normalize_author
 from app.services.sourcetime import pick_source_datetime
 
 BILI_HOSTS = ("bilibili.com", "b23.tv", "bili2233.cn")
@@ -128,6 +129,9 @@ class BilibiliAdapter(SiteAdapter):
             )
         data = view_payload.get("data") or {}
         title = str(data.get("title") or "B站视频")
+        author = normalize_author((data.get("owner") or {}).get("name"))
+        extra["author"] = author
+        extra["owner_mid"] = (data.get("owner") or {}).get("mid")
         pages = data.get("pages") or []
         extra["pages"] = len(pages)
         extra["duration"] = data.get("duration")
@@ -141,6 +145,7 @@ class BilibiliAdapter(SiteAdapter):
                 adapter=self.name,
                 source_type="page",
                 title=title,
+                author=author,
                 page_url=url,
                 needs_media_url=True,
                 message="已找到稿件，但没有可用分 P。请核对 p 参数，或填写媒体地址覆盖。",
@@ -168,6 +173,7 @@ class BilibiliAdapter(SiteAdapter):
                 adapter=self.name,
                 source_type="page",
                 title=title,
+                author=author,
                 page_url=url,
                 needs_media_url=True,
                 message=f"B站取流失败：{message}。{hint}",
@@ -181,6 +187,7 @@ class BilibiliAdapter(SiteAdapter):
                 adapter=self.name,
                 source_type="page",
                 title=title,
+                author=author,
                 page_url=url,
                 needs_media_url=True,
                 message="已登录或已拿到稿件信息，但没有可抽音的音轨。请填写媒体地址覆盖。",
@@ -196,6 +203,7 @@ class BilibiliAdapter(SiteAdapter):
             adapter=self.name,
             source_type="http_audio",
             title=title,
+            author=author,
             media_url=media_url,
             page_url=url,
             headers=headers,

@@ -8,6 +8,7 @@ from app.services.authctx import RequestAuth, http_headers
 from app.services.httpclient import http_client
 from app.services.ingest.base import ResolvedMedia, SiteAdapter, classify_direct_url
 from app.services.ingest.pageparse import extract_media_urls, extract_title
+from app.services.sourceauthor import normalize_author
 from app.services.sourcetime import pick_source_datetime
 
 YUENIU_HOSTS = ("yueniuzq.com", "yueniusz.com")
@@ -151,11 +152,13 @@ class YueniuAdapter(SiteAdapter):
                 result = payload.get("result") or {}
                 title = str(result.get("liveName") or "加菲财经直播")
                 created_at = pick_source_datetime(result)
+                author = normalize_author((result.get("user") or {}).get("name"))
                 extra.update(
                     {
                         "live_status": result.get("liveStatus"),
                         "vip_status": result.get("vipStatus"),
                         "author_id": result.get("authorId"),
+                        "author": author,
                     }
                 )
                 play_items = result.get("videoPlayUrl") or []
@@ -164,6 +167,7 @@ class YueniuAdapter(SiteAdapter):
                         adapter=self.name,
                         source_type="live",
                         title=title,
+                        author=author,
                         page_url=url,
                         needs_media_url=True,
                         message="已登录，但当前没有回放点播地址（可能未开播或仅有 WebRTC 直播）。请填写媒体地址覆盖。",
@@ -210,6 +214,7 @@ class YueniuAdapter(SiteAdapter):
                     adapter=self.name,
                     source_type=classify_direct_url(media_url),
                     title=title,
+                    author=author,
                     media_url=media_url,
                     page_url=url,
                     headers=headers,

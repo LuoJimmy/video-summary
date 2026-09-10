@@ -37,3 +37,5 @@ def migrate_job_columns() -> None:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN source_created_at DATETIME"))
         if "domain_id" not in names:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN domain_id VARCHAR(32) DEFAULT ''"))
+        if "author" not in names:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN author VARCHAR(120) DEFAULT ''"))

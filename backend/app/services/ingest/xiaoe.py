@@ -9,6 +9,7 @@ from app.services.authctx import RequestAuth, http_headers
 from app.services.httpclient import http_client
 from app.services.ingest.base import ResolvedMedia, SiteAdapter, classify_direct_url
 from app.services.ingest.pageparse import extract_media_urls, extract_title
+from app.services.sourceauthor import normalize_author
 from app.services.sourcetime import pick_source_datetime
 
 XIAOE_HOSTS = (
@@ -191,11 +192,13 @@ class XiaoeAdapter(SiteAdapter):
                 available = data.get("available_info") or {}
                 title = str(alive.get("title") or "小鹅通直播")
                 created_at = pick_source_datetime(alive)
+                author = normalize_author((data.get("alive_conf") or {}).get("wx_app_name"))
                 extra.update(
                     {
                         "alive_state": alive.get("alive_state"),
                         "product_name": alive.get("product_name"),
                         "available": available.get("available"),
+                        "author": author,
                     }
                 )
                 lookback: dict = {}
@@ -215,6 +218,7 @@ class XiaoeAdapter(SiteAdapter):
                         adapter=self.name,
                         source_type="live",
                         title=title,
+                        author=author,
                         page_url=url,
                         needs_media_url=True,
                         message="已登录并解析到直播信息，但当前没有可转写的回放或直播地址。请填写媒体地址覆盖。",
@@ -227,6 +231,7 @@ class XiaoeAdapter(SiteAdapter):
                     adapter=self.name,
                     source_type=classify_direct_url(media_url),
                     title=title,
+                    author=author,
                     media_url=media_url,
                     page_url=url,
                     headers=headers,

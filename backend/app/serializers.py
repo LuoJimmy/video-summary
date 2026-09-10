@@ -45,6 +45,7 @@ def job_out(row: Job, *, brief: bool = False) -> JobOut:
     return JobOut(
         id=row.id,
         title=row.title,
+        author=getattr(row, "author", "") or "",
         source_url=row.source_url,
         source_type=row.source_type,
         site_id=row.site_id,

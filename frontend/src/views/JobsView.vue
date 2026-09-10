@@ -37,6 +37,7 @@ const sites = ref<Site[]>([]);
 const sourceUrl = ref("");
 const mediaOverride = ref("");
 const title = ref("");
+const author = ref("");
 const siteId = ref("");
 const domainId = ref("a-share");
 const domainPresets = ref<DomainPack[]>([emptyDomainPack()]);
@@ -244,6 +245,7 @@ async function createFromUrl() {
       source_url: sourceUrl.value,
       media_url_override: mediaOverride.value,
       title: title.value,
+      author: author.value,
       site_id: siteId.value || null,
       domain_id: domainId.value || "a-share",
     });
@@ -258,7 +260,8 @@ async function createFromFile() {
   const job = await api.uploadJob(
     file.value,
     title.value || file.value.name,
-    domainId.value || "a-share"
+    domainId.value || "a-share",
+    author.value
   );
   await router.push(`/jobs/${job.id}`);
 }
@@ -291,6 +294,10 @@ function setFilterSort(value: string | null) {
   void loadJobs();
 }
 
+function jobSourceLine(job: Job) {
+  return [job.author?.trim(), job.source_url].filter(Boolean).join(" · ");
+}
+
 onMounted(async () => {
   await refresh();
   syncClock();
@@ -317,6 +324,14 @@ onBeforeUnmount(() => {
   <section class="card">
     <div class="grid two">
       <div class="field">
+        <Label>视频作者</Label>
+        <Input v-model="author" placeholder="可选" />
+      </div>
+      <div class="field">
+        <Label>标题（可选）</Label>
+        <Input v-model="title" />
+      </div>
+      <div class="field">
         <Label>页面或媒体地址</Label>
         <Input
           v-model="sourceUrl"
@@ -329,10 +344,6 @@ onBeforeUnmount(() => {
           v-model="mediaOverride"
           placeholder="登录后从 Network 复制的流地址"
         />
-      </div>
-      <div class="field">
-        <Label>标题（可选）</Label>
-        <Input v-model="title" />
       </div>
       <div class="field">
         <Label>指定站点（可留空自动匹配）</Label>
@@ -399,8 +410,8 @@ onBeforeUnmount(() => {
       <div class="field field-title">
         <Input
           v-model="filterTitle"
-          placeholder="标题"
-          aria-label="标题"
+          placeholder="标题 / 作者"
+          aria-label="标题或作者"
           @keydown.enter="applyFilters"
         />
       </div>
@@ -474,7 +485,7 @@ onBeforeUnmount(() => {
             :save="(next) => rename(job, next)"
           />
         </div>
-        <div class="msg">{{ job.source_url }}</div>
+        <div class="msg">{{ jobSourceLine(job) }}</div>
       </div>
       <div class="list-actions">
         <Badge

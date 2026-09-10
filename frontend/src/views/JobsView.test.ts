@@ -22,6 +22,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
   return {
     id: "job-1",
     title: "卖票方法",
+    author: "",
     source_url: "https://cdn.example.com/a.mp4",
     source_type: "direct",
     site_id: null,
@@ -118,7 +119,9 @@ function clickNamed(el: HTMLElement, name: string) {
 describe("任务列表筛选", () => {
   it("展示标题、时间、状态和查询重置", async () => {
     const el = await mountJobs();
-    expect(el.querySelector("input[placeholder='标题']")).toBeTruthy();
+    expect(el.querySelector("input[placeholder='标题 / 作者']")).toBeTruthy();
+    expect(el.querySelector("input[placeholder='标题']")).toBeFalsy();
+    expect(el.querySelector("input[placeholder='作者']")).toBeFalsy();
     expect(el.querySelector("input[aria-label='开始日期']")).toBeTruthy();
     expect(el.querySelector("input[aria-label='结束日期']")).toBeTruthy();
     expect(el.querySelector(".job-filters [aria-label='状态']")).toBeTruthy();
@@ -140,13 +143,14 @@ describe("任务列表筛选", () => {
     expect(el.querySelector(".pager")?.textContent).not.toContain("查询");
     expect(el.textContent).toContain("内容领域");
     expect(el.textContent).toContain("A股盘面课");
+    expect(el.textContent).toContain("视频作者");
   });
 
   it("按标题筛选时把关键字传给列表接口", async () => {
     const el = await mountJobs();
     vi.mocked(api.jobs).mockClear();
     const input = el.querySelector(
-      "input[placeholder='标题']"
+      "input[placeholder='标题 / 作者']"
     ) as HTMLInputElement;
     input.value = "卖票";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -157,6 +161,33 @@ describe("任务列表筛选", () => {
       1,
       10,
       expect.objectContaining({ title: "卖票" })
+    );
+  });
+
+  it("按作者筛选时把同一关键字传给列表接口", async () => {
+    const el = await mountJobs();
+    vi.mocked(api.jobs).mockClear();
+    const input = el.querySelector(
+      "input[placeholder='标题 / 作者']"
+    ) as HTMLInputElement;
+    input.value = "加菲";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    clickNamed(el, "查询");
+    await flush();
+    expect(api.jobs).toHaveBeenCalledWith(
+      1,
+      10,
+      expect.objectContaining({ title: "加菲" })
+    );
+  });
+
+  it("列表在地址前展示作者并用间隔符隔开", async () => {
+    const el = await mountJobs([
+      makeJob({ author: "加菲财经" }),
+    ]);
+    expect(el.querySelector(".list-item .msg")?.textContent).toBe(
+      "加菲财经 · https://cdn.example.com/a.mp4"
     );
   });
 
@@ -195,7 +226,7 @@ describe("任务列表筛选", () => {
       page_size: 10,
     });
     const input = el.querySelector(
-      "input[placeholder='标题']"
+      "input[placeholder='标题 / 作者']"
     ) as HTMLInputElement;
     input.value = "不存在";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -209,7 +240,7 @@ describe("任务列表筛选", () => {
   it("重置会清空条件并重新拉列表", async () => {
     const el = await mountJobs();
     const input = el.querySelector(
-      "input[placeholder='标题']"
+      "input[placeholder='标题 / 作者']"
     ) as HTMLInputElement;
     input.value = "卖票";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -221,7 +252,8 @@ describe("任务列表筛选", () => {
     await flush();
     expect(api.jobs).toHaveBeenCalledWith(1, 10, {});
     expect(
-      (el.querySelector("input[placeholder='标题']") as HTMLInputElement).value
+      (el.querySelector("input[placeholder='标题 / 作者']") as HTMLInputElement)
+        .value
     ).toBe("");
   });
 });

@@ -60,6 +60,16 @@ const elapsedLabel = computed(() => {
   if (!job.value || !jobBusy.value) return "";
   return formatDuration(jobElapsedSeconds(job.value, nowMs.value));
 });
+const sourceMeta = computed(() => {
+  if (!job.value) return "";
+  return [
+    formatDateTime(job.value.source_created_at),
+    job.value.author?.trim(),
+    job.value.source_url,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+});
 const canRetrySteps = computed(() => {
   const status = job.value?.status;
   return status === "done" || status === "failed" || status === "cancelled";
@@ -300,15 +310,7 @@ onBeforeUnmount(() => {
     <h1 v-else>任务详情</h1>
   </div>
   <div v-if="job">
-    <p class="sub">
-      <template v-if="formatDateTime(job.source_created_at)">{{
-        formatDateTime(job.source_created_at)
-      }}</template>
-      <template v-if="formatDateTime(job.source_created_at) && job.source_url">
-        ·
-      </template>
-      {{ job.source_url }}
-    </p>
+    <p class="sub">{{ sourceMeta }}</p>
     <section class="card">
       <div class="row">
         <Badge

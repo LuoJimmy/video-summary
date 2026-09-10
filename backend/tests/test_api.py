@@ -163,10 +163,11 @@ def test_lexicon_roundtrip_and_reset(client):
 def test_create_job_and_list(client):
     created = client.post(
         "/api/jobs",
-        json={"source_url": "https://cdn.example.com/a.mp4", "title": "直链"},
+        json={"source_url": "https://cdn.example.com/a.mp4", "title": "直链", "author": "加菲"},
     ).json()
     assert created["status"] == "pending"
     assert created["domain_id"] == "a-share"
+    assert created["author"] == "加菲"
     assert created["started_at"]
     assert created["source_created_at"] is None
     listed = client.get("/api/jobs").json()
@@ -200,9 +201,9 @@ def test_list_jobs_filtered(client, db_session):
     early = datetime(2026, 8, 13, 4, 0, 0)
     late = datetime(2026, 9, 1, 8, 0, 0)
     rows = [
-        Job(title="卖票方法", source_url="https://cdn.example.com/a.mp4", status="done", stage="done", source_created_at=early, created_at=late),
-        Job(title="低吸条件", source_url="https://cdn.example.com/b.mp4", status="failed", stage="failed", source_created_at=late, created_at=late),
-        Job(title="处理中的卖票", source_url="https://cdn.example.com/c.mp4", status="running", stage="transcribing", created_at=early),
+        Job(title="卖票方法", author="加菲财经", source_url="https://cdn.example.com/a.mp4", status="done", stage="done", source_created_at=early, created_at=late),
+        Job(title="低吸条件", author="约牛", source_url="https://cdn.example.com/b.mp4", status="failed", stage="failed", source_created_at=late, created_at=late),
+        Job(title="处理中的卖票", author="加菲直播", source_url="https://cdn.example.com/c.mp4", status="running", stage="transcribing", created_at=early),
         Job(title="已取消", source_url="https://cdn.example.com/d.mp4", status="cancelled", stage="cancelled", source_created_at=early, created_at=late),
     ]
     db_session.add_all(rows)
@@ -211,6 +212,14 @@ def test_list_jobs_filtered(client, db_session):
     by_title = client.get("/api/jobs", params={"title": "卖票"}).json()
     assert by_title["total"] == 2
     assert {item["title"] for item in by_title["items"]} == {"卖票方法", "处理中的卖票"}
+
+    by_author = client.get("/api/jobs", params={"title": "加菲"}).json()
+    assert by_author["total"] == 2
+    assert {item["title"] for item in by_author["items"]} == {"卖票方法", "处理中的卖票"}
+    by_author_exact = client.get("/api/jobs", params={"title": "约牛"}).json()
+    assert [item["title"] for item in by_author_exact["items"]] == ["低吸条件"]
+    escaped = client.get("/api/jobs", params={"title": "%加菲"}).json()
+    assert escaped["total"] == 0
 
     listed = client.get("/api/jobs", params={"page_size": 100}).json()
     assert listed["items"][0]["title"] == "低吸条件"
@@ -252,6 +261,12 @@ def test_list_jobs_filtered(client, db_session):
     ).json()
     assert [item["title"] for item in combined["items"]] == ["卖票方法"]
 
+    combined_author = client.get(
+        "/api/jobs",
+        params={"title": "加菲", "status": "done"},
+    ).json()
+    assert [item["title"] for item in combined_author["items"]] == ["卖票方法"]
+
     paged = client.get("/api/jobs", params={"title": "卖票", "page": 1, "page_size": 1}).json()
     assert paged["total"] == 2
     assert len(paged["items"]) == 1
@@ -264,10 +279,16 @@ def test_update_job_title(client):
     created = client.post("/api/jobs", json={"source_url": "https://cdn.example.com/a.mp4", "title": "旧标题"}).json()
     updated = client.patch(f"/api/jobs/{created['id']}", json={"title": "  新标题  "}).json()
     assert updated["title"] == "新标题"
+    patched_author = client.patch(
+        f"/api/jobs/{created['id']}", json={"title": "新标题", "author": "  加菲  "}
+    ).json()
+    assert patched_author["author"] == "加菲"
     loaded = client.get(f"/api/jobs/{created['id']}").json()
     assert loaded["title"] == "新标题"
+    assert loaded["author"] == "加菲"
     listed = client.get("/api/jobs").json()
     assert listed["items"][0]["title"] == "新标题"
+    assert listed["items"][0]["author"] == "加菲"
     missing = client.patch("/api/jobs/does-not-exist", json={"title": "x"})
     assert missing.status_code == 404
     too_long = client.patch(f"/api/jobs/{created['id']}", json={"title": "x" * 256})

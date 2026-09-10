@@ -80,6 +80,7 @@ export type SummaryResult = {
 export type Job = {
   id: string;
   title: string;
+  author: string;
   source_url: string;
   source_type: string;
   site_id: string | null;
@@ -253,7 +254,7 @@ export const api = {
     return request<JobList>(`/api/jobs?${params}`);
   },
   job: (id: string) => request<Job>(`/api/jobs/${id}`),
-  updateJob: (id: string, payload: { title: string }) =>
+  updateJob: (id: string, payload: { title: string; author?: string }) =>
     request<Job>(`/api/jobs/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
@@ -268,10 +269,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  uploadJob: (file: File, title: string, domainId = "a-share") => {
+  uploadJob: (file: File, title: string, domainId = "a-share", author = "") => {
     const body = new FormData();
     body.append("file", file);
     body.append("title", title);
+    body.append("author", author);
     body.append("domain_id", domainId || "a-share");
     if (file.lastModified)
       body.append("source_created_at", String(file.lastModified));

@@ -98,6 +98,7 @@ class DomainPresetCreateIn(BaseModel):
 class JobCreateIn(BaseModel):
     source_url: str = ""
     title: str = ""
+    author: str = ""
     site_id: str | None = None
     auth_profile_id: str | None = None
     media_url_override: str = ""
@@ -106,6 +107,7 @@ class JobCreateIn(BaseModel):
 
 class JobUpdateIn(BaseModel):
     title: str = Field(max_length=255)
+    author: str | None = Field(default=None, max_length=120)
 
 
 class TranscriptSegment(BaseModel):
@@ -142,6 +144,7 @@ class SummaryResult(BaseModel):
 class JobOut(BaseModel):
     id: str
     title: str
+    author: str = ""
     source_url: str
     source_type: str
     site_id: str | None

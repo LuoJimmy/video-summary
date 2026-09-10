@@ -40,6 +40,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
   return {
     id: "job-1",
     title: "测试任务",
+    author: "",
     source_url: "https://www.bilibili.com/video/BV1xx",
     source_type: "page",
     site_id: null,
@@ -200,6 +201,22 @@ describe("任务详情播放器", () => {
     const sub = el.querySelector(".sub")?.textContent || "";
     expect(sub).toContain(`${formatDateTime("2026-08-13T04:00:00Z")}`);
     expect(sub).toContain("https://www.bilibili.com/video/BV1xx");
+  });
+
+  it("在地址前展示作者并用间隔符隔开", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({
+        status: "done",
+        stage: "done",
+        progress: 100,
+        author: "加菲财经",
+        source_created_at: "2026-08-13T04:00:00Z",
+      })
+    );
+    const el = await mountDetail();
+    expect(el.querySelector(".sub")?.textContent?.trim()).toBe(
+      `${formatDateTime("2026-08-13T04:00:00Z")} · 加菲财经 · https://www.bilibili.com/video/BV1xx`
+    );
   });
 });
 

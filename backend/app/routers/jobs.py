@@ -5,7 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Query as SAQuery, Session
 
 from app.config import settings
@@ -35,7 +35,7 @@ def _naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _title_pattern(keyword: str) -> str:
+def _like_pattern(keyword: str) -> str:
     escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
@@ -67,7 +67,13 @@ def _jobs_query(
     query = db.query(Job)
     keyword = (title or "").strip()
     if keyword:
-        query = query.filter(Job.title.ilike(_title_pattern(keyword), escape="\\"))
+        pattern = _like_pattern(keyword)
+        query = query.filter(
+            or_(
+                Job.title.ilike(pattern, escape="\\"),
+                Job.author.ilike(pattern, escape="\\"),
+            )
+        )
     if status == "active":
         query = query.filter(Job.status.in_(("pending", "running")))
     elif status:
@@ -139,6 +145,8 @@ def update_job(job_id: str, payload: JobUpdateIn, db: Session = Depends(get_db))
     if row is None:
         raise HTTPException(404, "任务不存在")
     row.title = payload.title.strip()
+    if payload.author is not None:
+        row.author = payload.author.strip()
     db.commit()
     db.refresh(row)
     return job_out(row)
@@ -209,6 +217,7 @@ def create_job(payload: JobCreateIn, background: BackgroundTasks, db: Session = 
         raise HTTPException(400, "请提供页面地址或媒体地址")
     job = Job(
         title=payload.title,
+        author=payload.author.strip(),
         source_url=payload.source_url.strip(),
         site_id=payload.site_id,
         auth_profile_id=payload.auth_profile_id,
@@ -231,11 +240,13 @@ async def upload_job(
     db: Session = Depends(get_db),
     file: UploadFile = File(...),
     title: str = Form(""),
+    author: str = Form(""),
     source_created_at: str = Form(""),
     domain_id: str = Form(""),
 ) -> JobOut:
     job = Job(
         title=title or (file.filename or "本地文件"),
+        author=author.strip(),
         source_type="local_file",
         status="pending",
         stage="queued",

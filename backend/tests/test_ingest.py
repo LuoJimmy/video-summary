@@ -77,6 +77,7 @@ def test_xiaoe_official_lookback_to_m3u8():
                         "product_name": "专栏",
                         "zb_start_at": "2026-08-13 20:00:00",
                     },
+                    "alive_conf": {"wx_app_name": "启富课堂"},
                     "alive_play": {"alive_video_url": "http://liveplay.example.com/dead.m3u8"},
                     "available_info": {"available": True},
                 },
@@ -103,6 +104,7 @@ def test_xiaoe_official_lookback_to_m3u8():
     assert resolved.created_at.astimezone(ZoneInfo("Asia/Shanghai")).day == 13
     assert resolved.media_url.startswith("https://encrypt-k-vod.xet.tech/")
     assert resolved.source_type == "hls"
+    assert resolved.author == "启富课堂"
 
 
 @respx.mock
@@ -148,6 +150,7 @@ def test_yueniu_official_replay_to_m3u8():
                     "vipStatus": True,
                     "authorId": "119311606",
                     "liveStartTime": "2026-08-13 20:00:00",
+                    "user": {"name": "藏龙岛"},
                     "videoPlayUrl": [{"name": "高清", "type": "HD", "fileId": "5001"}],
                 },
             },
@@ -168,6 +171,7 @@ def test_yueniu_official_replay_to_m3u8():
     assert resolved.created_at is not None
     assert resolved.created_at.astimezone(ZoneInfo("Asia/Shanghai")).hour == 20
     assert resolved.media_url.endswith("a.m3u8")
+    assert resolved.author == "藏龙岛"
 
 
 @respx.mock
@@ -188,6 +192,7 @@ def test_yueniu_reads_start_ts_as_source_time():
                     "vipStatus": False,
                     "authorId": "119311606",
                     "startTs": 1788695842,
+                    "user": {"name": "藏龙岛"},
                     "videoPlayUrl": [{"name": "高清", "type": "HD", "fileId": "5001"}],
                 },
             },
@@ -249,6 +254,7 @@ def test_bilibili_resolves_dash_audio():
                     "duration": 613,
                     "pubdate": int(datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc).timestamp()),
                     "ctime": int(datetime(2026, 8, 13, 3, 0, tzinfo=timezone.utc).timestamp()),
+                    "owner": {"mid": 11430504, "name": "来去由心"},
                     "pages": [{"cid": 32110806955, "page": 1, "part": "P1"}],
                 },
             },
@@ -311,6 +317,7 @@ def test_bilibili_resolves_dash_audio():
     assert resolved.source_type == "http_audio"
     assert resolved.extra["play_audio_url"].endswith("192k.m4s")
     assert resolved.extra["play_video_url"].endswith("720.m4s")
+    assert resolved.author == "来去由心"
 
 
 @respx.mock
