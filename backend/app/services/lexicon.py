@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 
 from app.config import settings
+from app.data.ashare_board_names import ASHARE_BOARD_NAMES
+from app.data.ashare_short_names import ASHARE_SHORT_NAMES
 
 # 只收正确词，不收错法。拼音对齐用这张表去靠。用户可在设置里改，改完以本地文件为准。
 SEED_TERMS = (
@@ -446,7 +448,9 @@ def lexicon_path(preset: str | None = None) -> Path:
 def _seed_terms(preset: str | None = None) -> tuple[str, ...]:
     from app.services.domain import uses_ashare_lexicon
 
-    return SEED_TERMS if uses_ashare_lexicon(preset=preset) else ()
+    if not uses_ashare_lexicon(preset=preset):
+        return ()
+    return (*SEED_TERMS, *ASHARE_SHORT_NAMES, *ASHARE_BOARD_NAMES)
 
 
 def _seed_fixes(preset: str | None = None) -> tuple[tuple[str, str], ...]:
@@ -511,10 +515,11 @@ def _is_cjk_text(text: str) -> bool:
 class PinyinTermIndex:
     """词表按字数和全拼倒排，供近音查找复用。"""
 
-    __slots__ = ("term_set", "by_len_set", "lengths", "by_pinyin", "by_prefix", "prefixes")
+    __slots__ = ("term_set", "by_len_set", "lengths", "by_pinyin", "by_prefix", "prefixes", "near_cache")
 
     def __init__(self, terms: list[str] | tuple[str, ...]):
         self.term_set = set(terms)
+        self.near_cache: dict[str, list[str]] = {}
         self.by_len_set: dict[int, set[str]] = {}
         self.by_pinyin: dict[int, dict[str, list[str]]] = {}
         lengths: set[int] = set()
@@ -701,11 +706,16 @@ def _near_terms(
     index: PinyinTermIndex,
     pinyin_cache: dict[str, str],
 ) -> list[str]:
+    cached = index.near_cache.get(window)
+    if cached is not None:
+        return cached
     same_len = index.by_len_set.get(len(window))
     if window in COMMON_WORDS or (same_len and window in same_len):
+        index.near_cache[window] = []
         return []
     source_py = pinyin_cache.setdefault(window, _pinyin(window))
     if len(source_py) < 3:
+        index.near_cache[window] = []
         return []
     limit = _pinyin_limit(window, source_py)
     bucket = index.by_pinyin.get(len(window)) or {}
@@ -730,7 +740,9 @@ def _near_terms(
             seen.add(term)
             scored.append((dist, term))
     scored.sort()
-    return [term for _dist, term in scored[:8]]
+    result = [term for _dist, term in scored[:8]]
+    index.near_cache[window] = result
+    return result
 
 
 def _best_term(window: str, index: PinyinTermIndex, pinyin_cache: dict[str, str]) -> str | None:
