@@ -55,6 +55,29 @@ const current = computed(
 );
 
 const isGeneric = computed(() => current.value?.adapter === "generic");
+const adapterCount = computed(() => {
+  const counts: Record<string, number> = {};
+  for (const site of sites.value) {
+    counts[site.adapter] = (counts[site.adapter] || 0) + 1;
+  }
+  return counts;
+});
+const canDelete = computed(() => {
+  const site = current.value;
+  if (!site) return false;
+  if (site.adapter === "generic") return true;
+  return (adapterCount.value[site.adapter] || 0) > 1;
+});
+const addLabel = computed(() => {
+  const adapter = current.value?.adapter || "generic";
+  if (adapter === "xiaoe") return "添加小鹅通店铺";
+  if (adapter === "bilibili") return "添加 B 站 UP";
+  if (adapter === "yueniu") return "添加约牛账号";
+  return "添加通用直链";
+});
+const deleteLabel = computed(() =>
+  isGeneric.value ? "删除当前通用直链" : "删除当前站点"
+);
 
 const siteSelect = computed({
   get: () => current.value?.id || "",
@@ -105,16 +128,21 @@ async function refresh(preferred?: string) {
   selectSite(preferred);
 }
 
-function nextGenericName() {
+function nextName(adapter: string) {
+  const labels: Record<string, string> = {
+    xiaoe: "小鹅通",
+    yueniu: "加菲财经/约牛",
+    bilibili: "B站",
+    generic: "通用直链",
+  };
+  const base = labels[adapter] || "站点";
   const used = new Set(
-    sites.value
-      .filter((item) => item.adapter === "generic")
-      .map((item) => item.name)
+    sites.value.filter((item) => item.adapter === adapter).map((item) => item.name)
   );
-  if (!used.has("通用直链")) return "通用直链";
+  if (!used.has(base)) return base;
   let index = 2;
-  while (used.has(`通用直链 ${index}`)) index += 1;
-  return `通用直链 ${index}`;
+  while (used.has(`${base} ${index}`)) index += 1;
+  return `${base} ${index}`;
 }
 
 function patternsText(site: Site) {
@@ -167,37 +195,43 @@ async function saveCurrent() {
   }
 }
 
-async function addGeneric() {
+async function addCurrentKind() {
   if (adding.value) return;
+  const template =
+    current.value ||
+    sites.value.find((item) => item.adapter === "generic") ||
+    sites.value[0] ||
+    null;
+  const adapter = template?.adapter || "generic";
   adding.value = true;
   try {
     const created = await api.saveSite({
-      name: nextGenericName(),
-      adapter: "generic",
-      domain_patterns: [],
-      auth_profile_id: null,
-      cookie_override: "",
-      extra_headers: {},
+      name: nextName(adapter),
+      adapter,
+      domain_patterns: template?.domain_patterns || [],
+      auth_profile_id: template?.auth_profile_id || null,
+      cookie_override: template?.cookie_override || "",
+      extra_headers: template?.extra_headers || {},
       enabled: true,
-      notes: "本地文件、公开 mp4/m3u8，或不匹配其他站点时使用。",
+      notes: template?.notes || "",
     });
     toast.success(`已添加站点：${created.name}`);
     await refresh(created.id);
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "添加通用直链失败");
+    toast.error(err instanceof Error ? err.message : "添加站点失败");
   } finally {
     adding.value = false;
   }
 }
 
 function askDelete() {
-  if (!isGeneric.value || deleting.value || adding.value) return;
+  if (!canDelete.value || deleting.value || adding.value) return;
   askingDelete.value = true;
 }
 
 async function deleteCurrent() {
   const site = current.value;
-  if (!site || site.adapter !== "generic" || deleting.value) return;
+  if (!site || !canDelete.value || deleting.value) return;
   askingDelete.value = false;
   deleting.value = true;
   try {
@@ -218,8 +252,8 @@ onMounted(refresh);
 <template>
   <h1>站点</h1>
   <p class="sub">
-    小鹅通、约牛、B 站与适配器一对一绑定，只需填写
-    Cookie。通用直链可以自行增减。
+    小鹅通、约牛、B 站可添加多条：每个店铺或 UP
+    单独命名。Cookie 可共用同一登录档案。通用直链也可以自行增减。
   </p>
 
   <section class="card">
@@ -232,10 +266,10 @@ onMounted(refresh);
             size="icon-xs"
             class="icon-btn disabled:pointer-events-auto disabled:cursor-not-allowed"
             type="button"
-            aria-label="添加通用直链"
-            title="添加通用直链"
+            aria-label="添加站点"
+            :title="addLabel"
             :disabled="adding || deleting"
-            @click="addGeneric"
+            @click="addCurrentKind"
           >
             <Plus class="size-4" />
           </Button>
@@ -244,9 +278,9 @@ onMounted(refresh);
             size="icon-xs"
             class="icon-btn text-destructive disabled:pointer-events-auto disabled:cursor-not-allowed"
             type="button"
-            aria-label="删除当前通用直链"
-            title="删除当前通用直链"
-            :disabled="adding || deleting || !isGeneric"
+            aria-label="删除当前站点"
+            :title="deleteLabel"
+            :disabled="adding || deleting || !canDelete"
             @click="askDelete"
           >
             <Trash2 class="size-4" />
@@ -267,9 +301,9 @@ onMounted(refresh);
           </SelectContent>
         </Select>
       </div>
-      <div v-if="current && isGeneric" class="field">
+      <div v-if="current" class="field">
         <Label>名称</Label>
-        <Input v-model="current.name" placeholder="通用直链" />
+        <Input v-model="current.name" placeholder="站点名称" />
       </div>
     </div>
 
@@ -312,8 +346,8 @@ onMounted(refresh);
         <DialogTitle>确认删除</DialogTitle>
         <DialogDescription>
           确定删除站点「{{
-            current?.name || "通用直链"
-          }}」？已有任务仍保留记录。
+            current?.name || "当前站点"
+          }}」？已有任务仍保留记录。定时拉取里对应的内容源也会去掉。
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>

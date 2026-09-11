@@ -11,6 +11,19 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 HLS_HINTS = (".m3u8", "m3u8?")
 
 
+class CatalogError(Exception):
+    """站点内容列表失败，由调度器写入单站错误而不中断整轮。"""
+
+
+@dataclass
+class CatalogItem:
+    source_url: str
+    title: str = ""
+    author: str = ""
+    created_at: datetime | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass
 class ResolvedMedia:
     adapter: str
@@ -34,6 +47,14 @@ class SiteAdapter:
 
     def resolve(self, url: str, auth: RequestAuth, media_url_override: str = "") -> ResolvedMedia:
         raise NotImplementedError
+
+    def list_catalog(
+        self,
+        auth: RequestAuth,
+        catalog_id: str,
+        since: datetime | None = None,
+    ) -> list[CatalogItem]:
+        return []
 
 
 def classify_direct_url(url: str) -> str:

@@ -1,20 +1,59 @@
+import hashlib
+import json
 import re
-from urllib.parse import parse_qs, urlparse
+import time
+from datetime import datetime
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
 from app.services.authctx import RequestAuth, http_headers
 from app.services.httpclient import http_client
-from app.services.ingest.base import ResolvedMedia, SiteAdapter, classify_direct_url
+from app.services.ingest.base import CatalogError, CatalogItem, ResolvedMedia, SiteAdapter, classify_direct_url
 from app.services.sourceauthor import normalize_author
 from app.services.sourcetime import pick_source_datetime
 
 BILI_HOSTS = ("bilibili.com", "b23.tv", "bili2233.cn")
 VIEW_API = "https://api.bilibili.com/x/web-interface/view"
+NAV_API = "https://api.bilibili.com/x/web-interface/nav"
 PLAY_API = "https://api.bilibili.com/x/player/playurl"
 PLAY_WBI_API = "https://api.bilibili.com/x/player/wbi/playurl"
+SPACE_SEARCH_API = "https://api.bilibili.com/x/space/arc/search"
+SPACE_WBI_API = "https://api.bilibili.com/x/space/wbi/arc/search"
 BVID_RE = re.compile(r"(BV[0-9A-Za-z]{10})", re.I)
 AV_RE = re.compile(r"(?:/video/)?av(\d+)", re.I)
+MID_RE = re.compile(r"space\.bilibili\.com/(\d+)", re.I)
+PAGE_PAUSE = 0.8
+RETRY_BACKOFF = (2.0, 5.0, 10.0)
+MAX_SPACE_PAGES = 3
+RATE_LIMIT_CODES = {-799, -412, 412, -352, -509}
+RATE_LIMIT_STATUSES = {412, 429, 503}
+WBI_MIXIN_INDEX = (
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+    33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+    61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+    36, 20, 34, 44, 52,
+)
+
+
+def is_bili_rate_limited(code=None, message: str = "", status_code: int | None = None) -> bool:
+    if status_code in RATE_LIMIT_STATUSES:
+        return True
+    try:
+        code_int = int(code) if code is not None and code != "" else None
+    except (TypeError, ValueError):
+        code_int = None
+    if code_int in RATE_LIMIT_CODES:
+        return True
+    text = message or ""
+    lowered = text.lower()
+    return (
+        "频繁" in text
+        or "稍后再试" in text
+        or "限流" in text
+        or "too many" in lowered
+        or "rate limit" in lowered
+    )
 
 
 def parse_bilibili_ref(url: str) -> tuple[str, str, int]:
@@ -33,10 +72,52 @@ def parse_bilibili_ref(url: str) -> tuple[str, str, int]:
     return bvid, aid, page
 
 
+def parse_bilibili_mid(catalog_id: str) -> str:
+    text = (catalog_id or "").strip()
+    if re.fullmatch(r"\d+", text):
+        return text
+    match = MID_RE.search(text)
+    if match:
+        return match.group(1)
+    query = parse_qs(urlparse(text).query)
+    mid = (query.get("mid") or [""])[0].strip()
+    return mid if mid.isdigit() else ""
+
+
 def _https(url: str) -> str:
     if url.startswith("http://"):
         return "https://" + url[7:]
     return url
+
+
+def _wbi_filename(url: str) -> str:
+    name = str(url or "").rsplit("/", 1)[-1]
+    return name.split(".")[0]
+
+
+def sign_wbi(params: dict, img_key: str, sub_key: str) -> dict:
+    raw = (_wbi_filename(img_key) + _wbi_filename(sub_key)).ljust(64, "0")
+    mixin = "".join(raw[index] for index in WBI_MIXIN_INDEX)[:32]
+    signed = {key: "".join(ch for ch in str(value) if ch not in "!'()*") for key, value in params.items()}
+    signed["wts"] = str(int(time.time()))
+    query = urlencode(sorted(signed.items()))
+    signed["w_rid"] = hashlib.md5((query + mixin).encode("utf-8")).hexdigest()
+    return signed
+
+
+def _wbi_keys(client: httpx.Client) -> tuple[str, str] | None:
+    try:
+        response = client.get(NAV_API)
+        payload = response.json() if response.content else {}
+        data = payload.get("data") if isinstance(payload, dict) else {}
+        wbi = (data or {}).get("wbi_img") or {}
+        img_key = _wbi_filename(str(wbi.get("img_url") or ""))
+        sub_key = _wbi_filename(str(wbi.get("sub_url") or ""))
+        if img_key and sub_key:
+            return img_key, sub_key
+    except Exception:
+        return None
+    return None
 
 
 class BilibiliAdapter(SiteAdapter):
@@ -271,3 +352,121 @@ class BilibiliAdapter(SiteAdapter):
         best = max(pool, key=lambda item: (quality(item), bandwidth(item)))
         url = str(best.get("baseUrl") or best.get("base_url") or "").strip()
         return _https(url) if url else ""
+
+    def list_catalog(
+        self,
+        auth: RequestAuth,
+        catalog_id: str,
+        since: datetime | None = None,
+    ) -> list[CatalogItem]:
+        from app.services.sourcetime import ensure_utc
+
+        mid = parse_bilibili_mid(catalog_id)
+        if not mid:
+            raise CatalogError("请填写 B 站 UP 的 mid，或空间页地址")
+        headers = http_headers(auth)
+        headers.setdefault("Referer", "https://www.bilibili.com")
+        headers.setdefault("Origin", "https://www.bilibili.com")
+        items: list[CatalogItem] = []
+        try:
+            with http_client(follow_redirects=True, headers=headers) as client:
+                wbi_keys = _wbi_keys(client)
+                for page in range(1, MAX_SPACE_PAGES + 1):
+                    if page > 1 and PAGE_PAUSE:
+                        time.sleep(PAGE_PAUSE)
+                    payload, limited = _fetch_space_page(client, mid, page, wbi_keys)
+                    if limited:
+                        if items:
+                            break
+                        raise CatalogError("稿件列表被限流，请等几分钟再试")
+                    if payload.get("code") != 0:
+                        raise CatalogError(str(payload.get("message") or "B站稿件列表接口失败"))
+                    data = payload.get("data") or {}
+                    listing = data.get("list") or {}
+                    rows = listing.get("vlist") if isinstance(listing, dict) else listing
+                    if not rows:
+                        break
+                    reached_since = False
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        bvid = str(row.get("bvid") or "").strip()
+                        if not bvid:
+                            continue
+                        created_at = pick_source_datetime(row.get("created"), row.get("pubdate"), row)
+                        if since is not None and created_at is not None and ensure_utc(created_at) < ensure_utc(since):
+                            reached_since = True
+                            continue
+                        items.append(
+                            CatalogItem(
+                                source_url=f"https://www.bilibili.com/video/{bvid}",
+                                title=str(row.get("title") or "B站视频"),
+                                author=normalize_author(row.get("author")),
+                                created_at=created_at,
+                                extra={"bvid": bvid, "mid": mid, "aid": row.get("aid")},
+                            )
+                        )
+                    if len(rows) < 30 or reached_since:
+                        break
+        except CatalogError:
+            raise
+        except (httpx.HTTPError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            if items:
+                return items
+            raise CatalogError(f"B站稿件列表请求失败：{exc}") from exc
+        return items
+
+
+def _space_endpoints(mid: str, page: int, wbi_keys: tuple[str, str] | None) -> list[tuple[str, dict]]:
+    params = {"mid": mid, "pn": page, "ps": 30, "order": "pubdate"}
+    endpoints: list[tuple[str, dict]] = []
+    if wbi_keys:
+        signed = sign_wbi({**params, "platform": "web"}, wbi_keys[0], wbi_keys[1])
+        endpoints.append((SPACE_WBI_API, signed))
+    endpoints.append((SPACE_SEARCH_API, params))
+    return endpoints
+
+
+def _read_payload(response: httpx.Response) -> dict:
+    try:
+        parsed = response.json() if response.content else {}
+        if isinstance(parsed, dict):
+            return parsed
+    except (ValueError, json.JSONDecodeError):
+        return {}
+    return {}
+
+
+def _fetch_space_page(
+    client: httpx.Client,
+    mid: str,
+    page: int,
+    wbi_keys: tuple[str, str] | None,
+) -> tuple[dict, bool]:
+    last_payload: dict = {}
+    retries = max(1, len(RETRY_BACKOFF) + 1)
+    for attempt in range(retries):
+        limited = False
+        for url, params in _space_endpoints(mid, page, wbi_keys):
+            response = client.get(url, params=params)
+            payload = _read_payload(response)
+            message = str(payload.get("message") or "")
+            if is_bili_rate_limited(payload.get("code"), message, response.status_code):
+                last_payload = payload or {"message": "请求过于频繁，请稍后再试"}
+                limited = True
+                break
+            if response.status_code >= 400:
+                last_payload = payload or {"message": f"HTTP {response.status_code}"}
+                continue
+            if payload.get("code") == 0:
+                return payload, False
+            last_payload = payload
+        if not limited:
+            return last_payload, False
+        if attempt < len(RETRY_BACKOFF):
+            pause = RETRY_BACKOFF[attempt]
+            if pause:
+                time.sleep(pause)
+            continue
+        return last_payload or {"message": "请求过于频繁，请稍后再试"}, True
+    return last_payload or {"message": "请求过于频繁，请稍后再试"}, True

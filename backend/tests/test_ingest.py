@@ -349,3 +349,208 @@ def test_bilibili_short_link_follows_redirect():
     assert resolved.needs_media_url is False
     assert resolved.title == "短链视频"
     assert resolved.media_url.endswith("a.flv")
+
+
+def test_parse_xiaoe_and_bilibili_catalog_id():
+    from app.services.ingest.bilibili import parse_bilibili_mid
+    from app.services.ingest.xiaoe import parse_xiaoe_catalog_id
+
+    assert parse_xiaoe_catalog_id("appdemo") == "appdemo"
+    assert parse_xiaoe_catalog_id("https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_abc?app_id=appdemo") == "appdemo"
+    assert parse_bilibili_mid("11430504") == "11430504"
+    assert parse_bilibili_mid("https://space.bilibili.com/11430504") == "11430504"
+
+
+@respx.mock
+def test_xiaoe_list_catalog_skips_upcoming():
+    from app.services.ingest.xiaoe import XiaoeAdapter
+
+    respx.get("https://appdemo.h5.xiaoeknow.com/_alive/v2/list").mock(
+        return_value=Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "id": "l_old",
+                            "title": "未开始",
+                            "alive_state": 0,
+                            "zb_start_at": "2026-08-20 20:00:00",
+                        },
+                        {
+                            "id": "l_done",
+                            "title": "8.13行情梳理",
+                            "alive_state": 3,
+                            "zb_start_at": "2026-08-13 20:00:00",
+                            "wx_app_name": "启富课堂",
+                        },
+                    ]
+                },
+            },
+        )
+    )
+    items = XiaoeAdapter().list_catalog(RequestAuth(cookie="sid=1"), "appdemo")
+    assert [item.source_url for item in items] == [
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_done?app_id=appdemo"
+    ]
+    assert items[0].title == "8.13行情梳理"
+    assert items[0].author == "启富课堂"
+
+
+@respx.mock
+def test_yueniu_list_catalog_requires_cookie():
+    from app.services.ingest.base import CatalogError
+    from app.services.ingest.yueniu import YueniuAdapter
+
+    try:
+        YueniuAdapter().list_catalog(RequestAuth(), "")
+        raise AssertionError("应要求 Cookie")
+    except CatalogError as exc:
+        assert "Cookie" in str(exc)
+
+    respx.get("https://jf.yueniuzq.com/headGetUserInfo.json").mock(
+        return_value=Response(200, json={"muser_webUserId": "u1"})
+    )
+    respx.get("https://jflive.yueniuzq.com/api/live/pageList").mock(
+        return_value=Response(
+            200,
+            json={
+                "code": 0,
+                "result": {
+                    "records": [
+                        {
+                            "id": "3f14baab82b61eaf6d47deab521b6f7e",
+                            "liveName": "早盘直播",
+                            "startTs": int(datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc).timestamp()),
+                            "authorId": "author1",
+                            "user": {"name": "加菲"},
+                        }
+                    ]
+                },
+            },
+        )
+    )
+    items = YueniuAdapter().list_catalog(RequestAuth(cookie="_xx_ppt_token=abc"), "")
+    assert items[0].source_url.endswith("id=3f14baab82b61eaf6d47deab521b6f7e")
+    assert items[0].title == "早盘直播"
+    assert items[0].author == "加菲"
+
+
+@respx.mock
+def test_bilibili_list_catalog_by_mid():
+    from app.services.ingest.bilibili import BilibiliAdapter
+
+    respx.get("https://api.bilibili.com/x/space/arc/search").mock(
+        return_value=Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "list": {
+                        "vlist": [
+                            {
+                                "bvid": "BV1a4awzsENn",
+                                "title": "卖票方法",
+                                "author": "来去由心",
+                                "created": int(datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc).timestamp()),
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+    )
+    items = BilibiliAdapter().list_catalog(RequestAuth(), "https://space.bilibili.com/11430504")
+    assert items[0].source_url == "https://www.bilibili.com/video/BV1a4awzsENn"
+    assert items[0].title == "卖票方法"
+    assert items[0].created_at is not None
+    assert items[0].created_at.astimezone(ZoneInfo("Asia/Shanghai")).day == 13
+
+
+@respx.mock
+def test_bilibili_list_catalog_keeps_items_when_later_page_rate_limited(monkeypatch):
+    from app.services.ingest.bilibili import BilibiliAdapter
+
+    monkeypatch.setattr("app.services.ingest.bilibili.PAGE_PAUSE", 0)
+    monkeypatch.setattr("app.services.ingest.bilibili.RETRY_BACKOFF", ())
+
+    def handler(request):
+        pn = int(request.url.params.get("pn") or 1)
+        if pn == 1:
+            vlist = [
+                {
+                    "bvid": f"BV{index:010d}",
+                    "title": f"稿件{index}",
+                    "author": "UP",
+                    "created": 1700000000,
+                }
+                for index in range(30)
+            ]
+            return Response(200, json={"code": 0, "data": {"list": {"vlist": vlist}}})
+        return Response(200, json={"code": -799, "message": "请求过于频繁，请稍后再试"})
+
+    respx.get("https://api.bilibili.com/x/space/arc/search").mock(side_effect=handler)
+    items = BilibiliAdapter().list_catalog(RequestAuth(), "11430504")
+    assert len(items) == 30
+    assert items[0].source_url == "https://www.bilibili.com/video/BV0000000000"
+
+
+@respx.mock
+def test_bilibili_list_catalog_retries_then_raises_on_empty_rate_limit(monkeypatch):
+    from app.services.ingest.base import CatalogError
+    from app.services.ingest.bilibili import BilibiliAdapter
+
+    monkeypatch.setattr("app.services.ingest.bilibili.PAGE_PAUSE", 0)
+    monkeypatch.setattr("app.services.ingest.bilibili.RETRY_BACKOFF", ())
+    respx.get("https://api.bilibili.com/x/space/arc/search").mock(
+        return_value=Response(200, json={"code": -799, "message": "请求过于频繁，请稍后再试"})
+    )
+    try:
+        BilibiliAdapter().list_catalog(RequestAuth(), "11430504")
+        raise AssertionError("expected CatalogError")
+    except CatalogError as exc:
+        assert "限流" in str(exc)
+
+
+@respx.mock
+def test_bilibili_list_catalog_prefers_wbi_search():
+    from app.services.ingest.bilibili import BilibiliAdapter
+
+    respx.get("https://api.bilibili.com/x/web-interface/nav").mock(
+        return_value=Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/" + ("a" * 32) + ".png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/" + ("b" * 32) + ".png",
+                    }
+                },
+            },
+        )
+    )
+    respx.get("https://api.bilibili.com/x/space/wbi/arc/search").mock(
+        return_value=Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "list": {
+                        "vlist": [
+                            {
+                                "bvid": "BV1a4awzsENn",
+                                "title": "WBI稿件",
+                                "author": "来去由心",
+                                "created": 1700000000,
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+    )
+    items = BilibiliAdapter().list_catalog(RequestAuth(), "11430504")
+    assert items[0].title == "WBI稿件"
+    assert items[0].source_url == "https://www.bilibili.com/video/BV1a4awzsENn"

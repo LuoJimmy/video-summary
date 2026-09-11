@@ -47,6 +47,26 @@ class Site(Base):
     auth_profile: Mapped[AuthProfile | None] = relationship(back_populates="sites")
 
 
+class ScheduleSite(Base):
+    __tablename__ = "schedule_sites"
+
+    site_id: Mapped[str] = mapped_column(ForeignKey("sites.id"), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    catalog_id: Mapped[str] = mapped_column(Text, default="")
+
+
+class ScheduleLog(Base):
+    __tablename__ = "schedule_logs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    trigger: Mapped[str] = mapped_column(String(16), default="cron")
+    status: Mapped[str] = mapped_column(String(32), default="running")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    detail_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
 

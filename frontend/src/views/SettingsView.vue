@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { api, type AppSettings, type LexiconFix } from "../api";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import {
+  api,
+  type AppSettings,
+  type LexiconFix,
+  type ScheduleConfig,
+  type ScheduleLog,
+} from "../api";
 import { emptyDomainPack, type DomainPack } from "../utils/domain";
-import { ChevronRight, Plus, Trash2 } from "@lucide/vue";
+import { ChevronRight, Loader2, Plus, Trash2 } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -36,6 +42,7 @@ import {
   serializeLexiconTerms,
 } from "../utils/lexicon";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "../utils/theme";
+import { formatDateTime } from "../utils/time";
 import { toast } from "vue-sonner";
 
 const form = ref<AppSettings>({
@@ -66,6 +73,24 @@ const fixes = ref<LexiconFix[]>([]);
 const savingLexicon = ref(false);
 const themeId = ref<ThemeId>(readTheme());
 const transcribeSource = ref<"local" | "custom">("local");
+const schedule = ref<ScheduleConfig>({
+  enabled: false,
+  time: "08:00",
+  since: "",
+  max_jobs: 5,
+  domain_id: "a-share",
+  sites: [],
+});
+const scheduleLogs = ref<ScheduleLog[]>([]);
+const savingSchedule = ref(false);
+const runningSchedule = ref(false);
+const PENDING_RUN_ID = "pending-run";
+let runWatching = false;
+const askingClearLogs = ref(false);
+const clearingLogs = ref(false);
+const maxJobOptions = Array.from({ length: 20 }, (_, index) =>
+  String(index + 1)
+);
 
 const termCount = computed(() => parseLexiconTerms(termsText.value).length);
 const fixCount = computed(() => sanitizeLexiconFixes(fixes.value).length);
@@ -104,6 +129,15 @@ const threadSelect = computed({
     form.value.transcribe_threads = Number.isFinite(parsed)
       ? Math.max(1, Math.min(max, Math.round(parsed)))
       : defaultThreadHint.value;
+  },
+});
+const maxJobsSelect = computed({
+  get: () => String(Math.max(1, Math.min(20, schedule.value.max_jobs || 5))),
+  set: (value: string) => {
+    const parsed = Number(value);
+    schedule.value.max_jobs = Number.isFinite(parsed)
+      ? Math.max(1, Math.min(20, Math.round(parsed)))
+      : 5;
   },
 });
 
@@ -166,6 +200,11 @@ onMounted(async () => {
     transcribeSource.value = "custom";
   }
   await loadLexicon();
+  await loadSchedule();
+});
+
+onBeforeUnmount(() => {
+  runWatching = false;
 });
 
 function applyLocalTranscribe(model: string) {
@@ -230,6 +269,137 @@ async function loadLexicon(preset?: string) {
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "无法加载词汇表");
   }
+}
+
+async function loadSchedule() {
+  try {
+    const [next, logs] = await Promise.all([
+      api.schedule(),
+      api.scheduleLogs(),
+    ]);
+    schedule.value = next;
+    scheduleLogs.value = logs;
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "无法加载定时拉取设置");
+  }
+}
+
+async function saveSchedule() {
+  if (savingSchedule.value) return;
+  savingSchedule.value = true;
+  try {
+    schedule.value = await api.saveSchedule(schedule.value);
+    toast.success(
+      schedule.value.enabled
+        ? "定时拉取已保存。到点会扫描已启用站点，跳过已有任务。"
+        : "已保存。未开启每天定时，启动和后台都不会自动扫描。",
+    );
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "保存定时拉取失败");
+  } finally {
+    savingSchedule.value = false;
+  }
+}
+
+async function runScheduleNow() {
+  if (runningSchedule.value) return;
+  runningSchedule.value = true;
+  runWatching = true;
+  const pending: ScheduleLog = {
+    id: PENDING_RUN_ID,
+    started_at: new Date().toISOString(),
+    finished_at: null,
+    trigger: "manual",
+    status: "running",
+    summary: "正在扫描站点…",
+    detail: [],
+  };
+  scheduleLogs.value = [
+    pending,
+    ...scheduleLogs.value.filter((item) => item.id !== PENDING_RUN_ID),
+  ];
+  await nextTick();
+  try {
+    let log = await api.runSchedule();
+    upsertScheduleLog(log);
+    const started = Date.now();
+    while (
+      log.status === "running" &&
+      runWatching &&
+      Date.now() - started < 180000
+    ) {
+      await sleep(500);
+      if (!runWatching) return;
+      const logs = await api.scheduleLogs();
+      scheduleLogs.value = logs;
+      log = logs.find((item) => item.id === log.id) || logs[0] || log;
+    }
+    if (!runWatching) return;
+    if (log.status === "running") {
+      toast.error("仍在扫描，请稍后查看日志");
+      return;
+    }
+    if (log.status === "failed") {
+      toast.error(log.summary || "定时拉取失败");
+    } else if (log.status === "partial") {
+      toast.error(log.summary || "部分站点未拉完");
+    } else {
+      toast.success(log.summary || "已执行一轮定时拉取");
+    }
+  } catch (err) {
+    scheduleLogs.value = scheduleLogs.value.filter(
+      (item) => item.id !== PENDING_RUN_ID
+    );
+    toast.error(err instanceof Error ? err.message : "立即执行失败");
+  } finally {
+    runningSchedule.value = false;
+  }
+}
+
+function upsertScheduleLog(log: ScheduleLog) {
+  scheduleLogs.value = [
+    log,
+    ...scheduleLogs.value.filter(
+      (item) => item.id !== log.id && item.id !== PENDING_RUN_ID
+    ),
+  ].slice(0, 20);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function askClearLogs() {
+  if (!scheduleLogs.value.length || clearingLogs.value) return;
+  askingClearLogs.value = true;
+}
+
+async function clearScheduleLogs() {
+  if (clearingLogs.value) return;
+  askingClearLogs.value = false;
+  clearingLogs.value = true;
+  try {
+    await api.clearScheduleLogs();
+    scheduleLogs.value = [];
+    toast.success("定时日志已清除");
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "清除日志失败");
+  } finally {
+    clearingLogs.value = false;
+  }
+}
+
+function scheduleTriggerLabel(trigger: string) {
+  if (trigger === "manual") return "手动";
+  if (trigger === "startup") return "启动补跑";
+  return "定时";
+}
+
+function scheduleStatusLabel(status: string) {
+  if (status === "failed") return "失败";
+  if (status === "partial") return "部分成功";
+  if (status === "running") return "进行中";
+  return "成功";
 }
 
 function addFix() {
@@ -897,6 +1067,111 @@ const highlightPhrasesText = computed({
     </section>
 
     <section class="card">
+      <h3>定时拉取</h3>
+      <p class="msg mb-3">
+        只有打开「启用每天定时拉取」并保存后，到点才会自动扫描；未开启时启动和后台都不会跑。已有相同地址的任务会跳过，失败过的也不会反复重试。通用直链不参与。Cookie
+        仍在「站点」页配置。B 站多个
+        UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
+        app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。需要立刻扫一轮时用「立即执行」。
+      </p>
+      <label class="check !mb-3">
+        <Checkbox v-model="schedule.enabled" />
+        <span>启用每天定时拉取</span>
+      </label>
+      <div class="grid two">
+        <div class="field">
+          <Label>每天几点</Label>
+          <Input v-model="schedule.time" type="time" />
+        </div>
+        <div class="field">
+          <Label>从哪天开始</Label>
+          <Input v-model="schedule.since" type="date" />
+        </div>
+        <div class="field">
+          <Label>每次最多新建</Label>
+          <Select v-model="maxJobsSelect">
+            <SelectTrigger class="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem
+                v-for="item in maxJobOptions"
+                :key="item"
+                :value="item"
+                >{{ item }} 个任务</SelectItem
+              >
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div v-if="schedule.sites.length" class="schedule-sites">
+        <div
+          v-for="site in schedule.sites"
+          :key="site.site_id"
+          class="schedule-site"
+        >
+          <label class="check">
+            <Checkbox v-model="site.enabled" />
+            <span>{{ site.name }}</span>
+          </label>
+          <Textarea
+            v-model="site.catalog_id"
+            :placeholder="site.catalog_hint"
+            :aria-label="`${site.name}内容源`"
+            class="schedule-catalog"
+          />
+        </div>
+      </div>
+      <p v-else class="msg mt-3">暂无可定时的站点。</p>
+      <div class="row mt-3.5">
+        <Button type="button" :disabled="savingSchedule || runningSchedule" @click="saveSchedule"
+          >保存定时</Button
+        >
+        <Button
+          variant="outline"
+          type="button"
+          :disabled="runningSchedule"
+          :aria-busy="runningSchedule"
+          @click="runScheduleNow"
+        >
+          <Loader2 v-if="runningSchedule" class="size-4 animate-spin" />
+          {{ runningSchedule ? "正在扫描…" : "立即执行" }}
+        </Button>
+      </div>
+      <div class="schedule-logs">
+        <div class="schedule-logs-head">
+          <h4>最近运行</h4>
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="!scheduleLogs.length || clearingLogs || runningSchedule"
+            @click="askClearLogs"
+            >清除日志</Button
+          >
+        </div>
+        <div class="schedule-log-list" aria-live="polite">
+          <p v-if="!scheduleLogs.length" class="msg">还没有运行记录。</p>
+          <ul v-else>
+            <li
+              v-for="item in scheduleLogs"
+              :key="item.id"
+              :class="{ 'is-running': item.status === 'running' }"
+            >
+              <div class="schedule-log-head">
+                <strong>{{ formatDateTime(item.started_at) }}</strong>
+                <span
+                  >{{ scheduleTriggerLabel(item.trigger) }} ·
+                  {{ scheduleStatusLabel(item.status) }}</span
+                >
+              </div>
+              <p>{{ item.summary }}</p>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
       <h3>关于</h3>
       <div class="about-list">
         <div class="field">
@@ -950,6 +1225,40 @@ const highlightPhrasesText = computed({
             :disabled="savingPreset"
             @click="deleteDomainPreset"
             >确认删除</Button
+          >
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog
+      :open="askingClearLogs"
+      @update:open="
+        (next: boolean) => {
+          if (!next) askingClearLogs = false;
+        }
+      "
+    >
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>清除日志</DialogTitle>
+          <DialogDescription>
+            确定清除全部定时运行记录？不影响已创建的任务。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="clearingLogs"
+            @click="askingClearLogs = false"
+            >取消</Button
+          >
+          <Button
+            variant="destructive"
+            type="button"
+            :disabled="clearingLogs"
+            @click="clearScheduleLogs"
+            >确认清除</Button
           >
         </DialogFooter>
       </DialogContent>

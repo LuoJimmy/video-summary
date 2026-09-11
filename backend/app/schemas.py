@@ -248,3 +248,55 @@ class LexiconIn(BaseModel):
 class LexiconOut(LexiconIn):
     customized: bool = False
     preset: str = "a-share"
+
+
+class ScheduleSiteIn(BaseModel):
+    site_id: str
+    enabled: bool = False
+    catalog_id: str = ""
+
+
+class ScheduleIn(BaseModel):
+    enabled: bool = False
+    time: str = "08:00"
+    since: str = ""
+    max_jobs: int = 5
+    domain_id: str = ""
+    sites: list[ScheduleSiteIn] = Field(default_factory=list)
+
+
+class ScheduleSiteOut(BaseModel):
+    site_id: str
+    name: str
+    adapter: str
+    enabled: bool = False
+    catalog_id: str = ""
+    catalog_hint: str = ""
+
+
+class ScheduleOut(BaseModel):
+    enabled: bool = False
+    time: str = "08:00"
+    since: str = ""
+    max_jobs: int = 5
+    domain_id: str = ""
+    sites: list[ScheduleSiteOut] = Field(default_factory=list)
+
+
+class ScheduleLogSiteDetail(BaseModel):
+    site_id: str = ""
+    site_name: str = ""
+    listed: int = 0
+    created: int = 0
+    skipped: int = 0
+    error: str = ""
+
+
+class ScheduleLogOut(BaseModel):
+    id: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    trigger: str = "cron"
+    status: str = "ok"
+    summary: str = ""
+    detail: list[ScheduleLogSiteDetail] = Field(default_factory=list)

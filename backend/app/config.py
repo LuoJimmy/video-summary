@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     default_summarize_model: str = "deepseek-v4-flash"
     summarize_concurrency: int = 3
     prefetch_sensevoice: bool = True
+    schedule_loop: bool = True
 
     def uploads_path(self) -> Path:
         path = Path(self.download_dir).expanduser() if self.download_dir.strip() else (self.data_dir / "uploads")

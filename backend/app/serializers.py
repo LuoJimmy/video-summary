@@ -1,5 +1,5 @@
-from app.models import AuthProfile, Job, Site
-from app.schemas import AuthProfileOut, JobOut, SiteOut, SummaryResult, TranscriptSegment
+from app.models import AuthProfile, Job, ScheduleLog, Site
+from app.schemas import AuthProfileOut, JobOut, ScheduleLogOut, ScheduleLogSiteDetail, SiteOut, SummaryResult, TranscriptSegment
 from app.services.jsonutil import loads
 
 
@@ -64,4 +64,22 @@ def job_out(row: Job, *, brief: bool = False) -> JobOut:
         source_created_at=getattr(row, "source_created_at", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def schedule_log_out(row: ScheduleLog) -> ScheduleLogOut:
+    raw = loads(row.detail_json, [])
+    detail = []
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                detail.append(ScheduleLogSiteDetail.model_validate(item))
+    return ScheduleLogOut(
+        id=row.id,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        trigger=row.trigger,
+        status=row.status,
+        summary=row.summary,
+        detail=detail,
     )

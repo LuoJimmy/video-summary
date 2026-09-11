@@ -25,8 +25,39 @@ vi.mock("../api", () => ({
     lexicon: vi.fn(),
     saveLexicon: vi.fn(),
     resetLexicon: vi.fn(),
+    schedule: vi.fn(),
+    saveSchedule: vi.fn(),
+    runSchedule: vi.fn(),
+    scheduleLogs: vi.fn(),
+    clearScheduleLogs: vi.fn(),
   },
 }));
+
+const sampleSchedule = {
+  enabled: false,
+  time: "08:00",
+  since: "2026-08-01",
+  max_jobs: 5,
+  domain_id: "a-share",
+  sites: [
+    {
+      site_id: "xiaoe-1",
+      name: "小鹅通",
+      adapter: "xiaoe",
+      enabled: false,
+      catalog_id: "",
+      catalog_hint: "店铺 app_id，或店铺 H5 地址",
+    },
+    {
+      site_id: "yueniu-1",
+      name: "加菲财经/约牛",
+      adapter: "yueniu",
+      enabled: false,
+      catalog_id: "",
+      catalog_hint: "可空；填写则按作者 authorId 过滤",
+    },
+  ],
+};
 
 const localSettings: AppSettings = {
   transcribe_base_url: "",
@@ -52,13 +83,26 @@ async function flush() {
   await nextTick();
 }
 
-async function mountSettings(settings: AppSettings) {
+async function mountSettings(
+  settings: AppSettings,
+  logs: Array<{
+    id: string;
+    started_at: string;
+    finished_at: string | null;
+    trigger: string;
+    status: string;
+    summary: string;
+    detail: unknown[];
+  }> = []
+) {
   vi.mocked(api.settings).mockResolvedValue(settings);
   vi.mocked(api.lexicon).mockResolvedValue({
     terms: [],
     fixes: [],
     customized: false,
   });
+  vi.mocked(api.schedule).mockResolvedValue(sampleSchedule);
+  vi.mocked(api.scheduleLogs).mockResolvedValue(logs);
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -171,5 +215,97 @@ describe("设置页模型限制说明", () => {
     expect(about?.textContent).toContain("更新日志");
     const changelog = about?.querySelector('a[href="/settings/changelog"]');
     expect(changelog?.textContent).toContain("查看本版本更新");
+  });
+
+  it("展示定时拉取站点与日志区", async () => {
+    const el = await mountSettings(localSettings, [
+      {
+        id: "log-1",
+        started_at: "2026-09-10T01:00:00Z",
+        finished_at: "2026-09-10T01:00:02Z",
+        trigger: "manual",
+        status: "ok",
+        summary: "小鹅通：新建 1，跳过 2",
+        detail: [],
+      },
+    ]);
+    expect(el.textContent).toContain("定时拉取");
+    expect(el.textContent).toContain("小鹅通");
+    expect(el.textContent).toContain("从哪天开始");
+    expect(el.textContent).toContain("立即执行");
+    expect(el.textContent).toContain("多个 UP");
+    expect(el.textContent).toContain("小鹅通：新建 1，跳过 2");
+    const saveBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("保存定时")
+    );
+    expect(saveBtn).toBeTruthy();
+    vi.mocked(api.saveSchedule).mockResolvedValue({
+      ...sampleSchedule,
+      enabled: true,
+    });
+    saveBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.saveSchedule).toHaveBeenCalledTimes(1);
+    const clearBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("清除日志")
+    );
+    expect(clearBtn).toBeTruthy();
+    expect((clearBtn as HTMLButtonElement).disabled).toBe(false);
+    expect(el.querySelector(".schedule-log-list")).toBeTruthy();
+    vi.mocked(api.clearScheduleLogs).mockResolvedValue({ ok: true });
+    clearBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(document.body.textContent).toContain("确定清除全部定时运行记录");
+    const confirm = [...document.body.querySelectorAll("button")].find(
+      (item) => item.textContent === "确认清除"
+    );
+    confirm?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.clearScheduleLogs).toHaveBeenCalledTimes(1);
+  });
+
+  it("立即执行时立刻展示扫描中，完成后写入日志", async () => {
+    let finishRun: ((value: {
+      id: string;
+      started_at: string;
+      finished_at: string | null;
+      trigger: string;
+      status: string;
+      summary: string;
+      detail: unknown[];
+    }) => void) | undefined;
+    vi.mocked(api.runSchedule).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishRun = resolve;
+        })
+    );
+    const el = await mountSettings(localSettings);
+    const runBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("立即执行")
+    ) as HTMLButtonElement | undefined;
+    expect(runBtn).toBeTruthy();
+    runBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(runBtn?.disabled).toBe(true);
+    expect(runBtn?.textContent).toContain("正在扫描");
+    expect(runBtn?.getAttribute("aria-busy")).toBe("true");
+    expect(el.textContent).toContain("正在扫描站点");
+    expect(el.textContent).toContain("进行中");
+    finishRun?.({
+      id: "log-run",
+      started_at: "2026-09-11T09:41:00Z",
+      finished_at: "2026-09-11T09:41:08Z",
+      trigger: "manual",
+      status: "partial",
+      summary: "B站：跳过 1，请求过于频繁，请稍后再试",
+      detail: [],
+    });
+    await flush();
+    expect(el.textContent).toContain("请求过于频繁");
+    expect(el.textContent).toContain("部分成功");
+    expect(toast.error).toHaveBeenCalled();
+    expect(runBtn?.disabled).toBe(false);
+    expect(runBtn?.textContent).toContain("立即执行");
   });
 });

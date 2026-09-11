@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 os.environ["PREFETCH_SENSEVOICE"] = "0"
+os.environ["SCHEDULE_LOOP"] = "0"
 
 import pytest
 from fastapi.testclient import TestClient

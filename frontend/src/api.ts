@@ -154,6 +154,43 @@ export type KnowledgeChatOut = {
   citations: KnowledgeHit[];
 };
 
+export type ScheduleSite = {
+  site_id: string;
+  name: string;
+  adapter: string;
+  enabled: boolean;
+  catalog_id: string;
+  catalog_hint: string;
+};
+
+export type ScheduleConfig = {
+  enabled: boolean;
+  time: string;
+  since: string;
+  max_jobs: number;
+  domain_id: string;
+  sites: ScheduleSite[];
+};
+
+export type ScheduleLogDetail = {
+  site_id: string;
+  site_name: string;
+  listed: number;
+  created: number;
+  skipped: number;
+  error: string;
+};
+
+export type ScheduleLog = {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  trigger: string;
+  status: string;
+  summary: string;
+  detail: ScheduleLogDetail[];
+};
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -312,4 +349,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ messages, domain_id: domainId }),
     }),
+  schedule: () => request<ScheduleConfig>("/api/schedule"),
+  saveSchedule: (payload: ScheduleConfig) =>
+    request<ScheduleConfig>("/api/schedule", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  runSchedule: () =>
+    request<ScheduleLog>("/api/schedule/run?wait=false", { method: "POST" }),
+  scheduleLogs: (limit = 20) =>
+    request<ScheduleLog[]>(`/api/schedule/logs?limit=${limit}`),
+  clearScheduleLogs: () =>
+    request<{ ok: boolean }>("/api/schedule/logs", { method: "DELETE" }),
 };

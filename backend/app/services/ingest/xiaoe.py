@@ -1,13 +1,14 @@
 import base64
 import json
 import re
+from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 
 from app.services.authctx import RequestAuth, http_headers
 from app.services.httpclient import http_client
-from app.services.ingest.base import ResolvedMedia, SiteAdapter, classify_direct_url
+from app.services.ingest.base import CatalogError, CatalogItem, ResolvedMedia, SiteAdapter, classify_direct_url
 from app.services.ingest.pageparse import extract_media_urls, extract_title
 from app.services.sourceauthor import normalize_author
 from app.services.sourcetime import pick_source_datetime
@@ -50,6 +51,20 @@ def parse_xiaoe_ref(url: str) -> tuple[str, str]:
         except Exception:
             pass
     return app_id, resource_id
+
+
+def parse_xiaoe_catalog_id(catalog_id: str) -> str:
+    text = (catalog_id or "").strip()
+    if re.fullmatch(r"app[A-Za-z0-9]+", text, re.I):
+        return text
+    if text and "://" not in text and "." not in text:
+        if text.lower().startswith("app"):
+            return text
+    candidate = text
+    if text and "://" not in text and "." in text:
+        candidate = "https://" + text
+    app_id, _ = parse_xiaoe_ref(candidate)
+    return app_id
 
 
 def _https(url: str) -> str:
@@ -265,3 +280,77 @@ class XiaoeAdapter(SiteAdapter):
             play.get("mini_alive_video_url"),
             play.get("pc_alive_video_url"),
         )
+
+    def list_catalog(
+        self,
+        auth: RequestAuth,
+        catalog_id: str,
+        since: datetime | None = None,
+    ) -> list[CatalogItem]:
+        from app.services.sourcetime import ensure_utc
+
+        app_id = parse_xiaoe_catalog_id(catalog_id)
+        if not app_id:
+            raise CatalogError("请填写小鹅通店铺 app_id，或粘贴店铺 H5 地址")
+        headers = http_headers(auth)
+        shop = f"https://{app_id}.h5.xiaoeknow.com"
+        headers.setdefault("Referer", f"{shop}/")
+        headers.setdefault("Origin", shop)
+        api_headers = {
+            **headers,
+            "app_id": app_id,
+            "AppId": app_id,
+            "kpi_client": "9",
+            "Accept": "application/json",
+        }
+        items: list[CatalogItem] = []
+        try:
+            with http_client(follow_redirects=True, headers=api_headers) as client:
+                for page in range(1, 16):
+                    response = client.get(
+                        f"{shop}/_alive/v2/list",
+                        params={"app_id": app_id, "page": page, "page_size": 20},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    if payload.get("code") != 0:
+                        raise CatalogError(str(payload.get("msg") or "小鹅通直播列表接口失败"))
+                    data = payload.get("data") or {}
+                    rows = data.get("list") or []
+                    if not rows:
+                        break
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        if str(row.get("recycle_bin_state") or "0") not in {"0", ""}:
+                            continue
+                        state = row.get("alive_state")
+                        # 未开始且无回放的场次跳过；0 在 Python 里是假值，不能用 `or`
+                        if state in (0, "0"):
+                            continue
+                        resource_id = str(row.get("id") or row.get("resource_id") or "").strip()
+                        if not resource_id:
+                            continue
+                        created_at = pick_source_datetime(row)
+                        if since is not None and created_at is not None and ensure_utc(created_at) < ensure_utc(since):
+                            continue
+                        author = normalize_author(
+                            row.get("wx_app_name")
+                            or ((row.get("guest_list") or [{}])[0] or {}).get("user_name")
+                        )
+                        items.append(
+                            CatalogItem(
+                                source_url=f"{shop}/v4/course/alive/{resource_id}?app_id={app_id}",
+                                title=str(row.get("title") or "小鹅通直播"),
+                                author=author,
+                                created_at=created_at,
+                                extra={"app_id": app_id, "resource_id": resource_id, "alive_state": row.get("alive_state")},
+                            )
+                        )
+                    if len(rows) < 20:
+                        break
+        except CatalogError:
+            raise
+        except (httpx.HTTPError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            raise CatalogError(f"小鹅通直播列表请求失败：{exc}") from exc
+        return items

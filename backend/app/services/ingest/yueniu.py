@@ -1,12 +1,13 @@
 import base64
 import json
+from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 
 from app.services.authctx import RequestAuth, http_headers
 from app.services.httpclient import http_client
-from app.services.ingest.base import ResolvedMedia, SiteAdapter, classify_direct_url
+from app.services.ingest.base import CatalogError, CatalogItem, ResolvedMedia, SiteAdapter, classify_direct_url
 from app.services.ingest.pageparse import extract_media_urls, extract_title
 from app.services.sourceauthor import normalize_author
 from app.services.sourcetime import pick_source_datetime
@@ -230,3 +231,72 @@ class YueniuAdapter(SiteAdapter):
         response.raise_for_status()
         data = response.json()
         return str(data.get("muser_webUserId") or "")
+
+    def list_catalog(
+        self,
+        auth: RequestAuth,
+        catalog_id: str,
+        since: datetime | None = None,
+    ) -> list[CatalogItem]:
+        from app.services.sourcetime import ensure_utc
+
+        if not auth.cookie.strip():
+            raise CatalogError("未配置约牛登录 Cookie，无法拉取直播日历")
+        headers = http_headers(auth)
+        headers.setdefault("Referer", "https://jf.yueniuzq.com/")
+        headers.setdefault("Origin", "https://jf.yueniuzq.com")
+        token = cookie_value(auth.cookie, "_xx_ppt_token")
+        author_id = (catalog_id or "").strip()
+        items: list[CatalogItem] = []
+        try:
+            with http_client(follow_redirects=True, headers=headers) as client:
+                user_id = self._user_id(client)
+                for page in range(1, 16):
+                    params = {
+                        "page": page,
+                        "pageSize": 20,
+                        "from": "pc",
+                        "token": token,
+                    }
+                    if author_id:
+                        params["authorId"] = author_id
+                    response = client.get(
+                        f"{LIVE_API}/api/live/pageList",
+                        params=params,
+                        headers={**headers, "token": token, "uid": user_id},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    if payload.get("code") != 0:
+                        raise CatalogError(str(payload.get("message") or "约牛直播列表接口失败"))
+                    result = payload.get("result") or {}
+                    rows = result.get("records") or result.get("list") or []
+                    if not rows:
+                        break
+                    reached_since = False
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        live_id = str(row.get("id") or row.get("liveId") or "").strip()
+                        if not live_id:
+                            continue
+                        created_at = pick_source_datetime(row)
+                        if since is not None and created_at is not None and ensure_utc(created_at) < ensure_utc(since):
+                            reached_since = True
+                            continue
+                        items.append(
+                            CatalogItem(
+                                source_url=f"https://jf.yueniuzq.com/living/?id={live_id}",
+                                title=str(row.get("liveName") or row.get("title") or "加菲财经直播"),
+                                author=normalize_author((row.get("user") or {}).get("name") or row.get("authorName")),
+                                created_at=created_at,
+                                extra={"live_id": live_id, "author_id": row.get("authorId")},
+                            )
+                        )
+                    if len(rows) < 20 or reached_since:
+                        break
+        except CatalogError:
+            raise
+        except (httpx.HTTPError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            raise CatalogError(f"约牛直播列表请求失败：{exc}") from exc
+        return items

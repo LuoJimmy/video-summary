@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Site
+from app.models import ScheduleSite, Site
 from app.schemas import SiteIn, SiteOut
 from app.serializers import site_out
 from app.services.jsonutil import dumps
@@ -57,6 +57,14 @@ def delete_site(site_id: str, db: Session = Depends(get_db)) -> dict:
     row = db.get(Site, site_id)
     if row is None:
         raise HTTPException(404, "站点不存在")
+    extra = db.get(ScheduleSite, site_id)
+    if extra is not None:
+        db.delete(extra)
+    if row.adapter != "generic":
+        remain = db.query(Site).filter(Site.adapter == row.adapter, Site.id != site_id).count()
+        if remain <= 0:
+            labels = {"xiaoe": "小鹅通", "yueniu": "约牛", "bilibili": "B站"}
+            raise HTTPException(400, f"至少保留一个{labels.get(row.adapter, row.adapter)}站点")
     db.delete(row)
     db.commit()
     return {"ok": True}

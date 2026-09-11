@@ -461,6 +461,69 @@ h3 {
 .changelog-section li {
   overflow-wrap: anywhere;
 }
+.schedule-sites {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.schedule-site {
+  display: grid;
+  gap: var(--space-2);
+}
+.schedule-catalog {
+  min-height: 4.5rem;
+}
+.schedule-logs {
+  margin-top: var(--space-4);
+}
+.schedule-logs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.schedule-logs-head h4 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  color: var(--strong);
+}
+.schedule-log-list {
+  height: 16rem;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  background: var(--panel);
+}
+.schedule-log-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+.schedule-log-list li.is-running {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.65rem;
+}
+.schedule-log-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.schedule-log-list p {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+.schedule-log-list .msg {
+  margin: 0;
+}
 .row {
   display: flex;
   gap: var(--space-3);

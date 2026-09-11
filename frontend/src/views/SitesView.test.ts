@@ -120,13 +120,14 @@ describe("站点页", () => {
     expect(el.querySelectorAll('[data-slot="textarea"]').length).toBe(1);
     expect(el.querySelectorAll("h3").length).toBe(0);
     const addBtn = el.querySelector(
-      '[aria-label="添加通用直链"]'
+      '[aria-label="添加站点"]'
     ) as HTMLButtonElement;
     const deleteBtn = el.querySelector(
-      '[aria-label="删除当前通用直链"]'
+      '[aria-label="删除当前站点"]'
     ) as HTMLButtonElement;
     expect(addBtn).toBeTruthy();
     expect(deleteBtn.disabled).toBe(true);
+    expect(addBtn.title).toContain("小鹅通");
     const cookie = el.querySelector("textarea") as HTMLTextAreaElement;
     expect(cookie.placeholder).toContain("xetslk.com");
   });
@@ -140,13 +141,11 @@ describe("站点页", () => {
     expect(cookie.value).toBe("sid=from-profile");
   });
 
-  it("可以添加通用直链并切到新建项", async () => {
+  it("可以添加同类小鹅通店铺", async () => {
     const created = makeSite({
-      id: "s-generic-2",
-      name: "通用直链 2",
-      adapter: "generic",
-      auth_profile_id: null,
-      domain_patterns: [],
+      id: "s-xiaoe-2",
+      name: "小鹅通 2",
+      adapter: "xiaoe",
     });
     const el = await mountSites();
     vi.mocked(api.saveSite).mockResolvedValue(created);
@@ -154,7 +153,40 @@ describe("站点页", () => {
       [...seedSites, created].map((item) => ({ ...item }))
     );
     const addBtn = el.querySelector(
-      '[aria-label="添加通用直链"]'
+      '[aria-label="添加站点"]'
+    ) as HTMLButtonElement;
+    addBtn.click();
+    await flush();
+    expect(api.saveSite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter: "xiaoe",
+        name: "小鹅通 2",
+      })
+    );
+  });
+
+  it("可以添加通用直链并切到新建项", async () => {
+    const generic = makeSite({
+      id: "s-generic",
+      name: "通用直链",
+      adapter: "generic",
+      auth_profile_id: null,
+      domain_patterns: [],
+    });
+    const created = makeSite({
+      id: "s-generic-2",
+      name: "通用直链 2",
+      adapter: "generic",
+      auth_profile_id: null,
+      domain_patterns: [],
+    });
+    const el = await mountSites([generic], []);
+    vi.mocked(api.saveSite).mockResolvedValue(created);
+    vi.mocked(api.sites).mockResolvedValue(
+      [generic, created].map((item) => ({ ...item }))
+    );
+    const addBtn = el.querySelector(
+      '[aria-label="添加站点"]'
     ) as HTMLButtonElement;
     addBtn.click();
     await flush();
@@ -177,7 +209,7 @@ describe("站点页", () => {
     });
     const el = await mountSites([generic], []);
     const deleteBtn = el.querySelector(
-      '[aria-label="删除当前通用直链"]'
+      '[aria-label="删除当前站点"]'
     ) as HTMLButtonElement;
     expect(deleteBtn.disabled).toBe(false);
     deleteBtn.click();
