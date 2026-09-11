@@ -34,6 +34,29 @@ def test_generic_local_and_hls(tmp_path):
     assert hls.needs_media_url is False
 
 
+def test_generic_document_and_web_page(tmp_path):
+    from app.services.ingest.base import classify_direct_url, is_document_source
+
+    note = tmp_path / "notes.pdf"
+    note.write_bytes(b"%PDF")
+    adapter = GenericAdapter()
+    local = adapter.resolve(str(note), RequestAuth())
+    assert local.source_type == "local_document"
+    assert is_document_source(local.source_type)
+    assert local.needs_media_url is False
+
+    page = adapter.resolve("https://example.com/article/hello", RequestAuth())
+    assert page.source_type == "web_page"
+    assert page.needs_media_url is False
+    assert "网页正文" in page.message
+    assert page.media_url == "https://example.com/article/hello"
+
+    pdf = adapter.resolve("https://cdn.example.com/report.pdf", RequestAuth())
+    assert pdf.source_type == "http_document"
+    assert pdf.needs_media_url is False
+    assert classify_direct_url("https://cdn.example.com/a.docx") == "http_document"
+
+
 @respx.mock
 def test_xiaoe_extracts_m3u8_from_page():
     respx.get("https://etrsz.xetslk.com/sl/q1M06").mock(

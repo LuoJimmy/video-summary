@@ -39,14 +39,14 @@ def attach_timestamps(summary: SummaryResult, segments: list[TranscriptSegment])
         if end_i < start_i:
             start_i, end_i = end_i, start_i
         if not segments:
-            return 0.0, 0.0, start_segment, end_segment
+            return 0.0, 0.0, start_segment, end_segment, ""
         start_seg = segments[start_i]
         end_seg = segments[end_i]
-        return start_seg.start, end_seg.end, start_seg.id, end_seg.id
+        return start_seg.start, end_seg.end, start_seg.id, end_seg.id, (start_seg.locator or "").strip()
 
     chapters: list[SummaryChapter] = []
     for chapter in summary.chapters:
-        start, end, start_i, end_i = bounds(chapter.start_segment, chapter.end_segment)
+        start, end, start_i, end_i, locator = bounds(chapter.start_segment, chapter.end_segment)
         chapters.append(
             chapter.model_copy(
                 update={
@@ -54,13 +54,14 @@ def attach_timestamps(summary: SummaryResult, segments: list[TranscriptSegment])
                     "end": end,
                     "start_segment": start_i,
                     "end_segment": end_i,
+                    "locator": locator or chapter.locator,
                 }
             )
         )
 
     points: list[SummaryKeyPoint] = []
     for point in summary.key_points:
-        start, end, start_i, end_i = bounds(point.start_segment, point.end_segment)
+        start, end, start_i, end_i, locator = bounds(point.start_segment, point.end_segment)
         points.append(
             point.model_copy(
                 update={
@@ -68,6 +69,7 @@ def attach_timestamps(summary: SummaryResult, segments: list[TranscriptSegment])
                     "end": end,
                     "start_segment": start_i,
                     "end_segment": end_i,
+                    "locator": locator or point.locator,
                 }
             )
         )

@@ -17,6 +17,109 @@ def test_health(client):
     assert client.get("/api/health").json()["ok"] is True
 
 
+def test_plugins_list(client):
+    items = client.get("/api/plugins").json()
+    assert {item["id"] for item in items} >= {"ocr", "legacy_doc"}
+
+
+def test_document_file_preview(client, db_session, tmp_path, monkeypatch):
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    monkeypatch.setattr(app_settings, "download_dir", "")
+    job = Job(
+        title="研报",
+        source_url="report.pdf",
+        source_type="local_document",
+        status="done",
+    )
+    db_session.add(job)
+    db_session.commit()
+    pdf = app_settings.job_workdir(job.id) / "source.pdf"
+    pdf.write_bytes(b"%PDF-1.4 preview")
+    job.source_path = str(pdf)
+    db_session.commit()
+    response = client.get(f"/api/jobs/{job.id}/file")
+    assert response.status_code == 200
+    assert "pdf" in response.headers.get("content-type", "")
+    assert response.content.startswith(b"%PDF")
+    denied = client.post("/api/jobs", json={"source_url": "https://cdn.example.com/a.mp4", "title": "视频"}).json()
+    media = db_session.get(Job, denied["id"])
+    media.source_type = "local_file"
+    db_session.commit()
+    bad = client.get(f"/api/jobs/{denied['id']}/file")
+    assert bad.status_code == 400
+
+
+def test_web_page_file_preview_renders_transcript(client, db_session, tmp_path, monkeypatch):
+    from app.config import settings as app_settings
+    from app.services.jsonutil import dumps
+
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    monkeypatch.setattr(app_settings, "download_dir", "")
+    job = Job(
+        title="9月11日盘前纪要",
+        source_url="https://www.jiuyangongshe.com/h5/article/abc",
+        source_type="web_page",
+        status="done",
+        transcript_json=dumps(
+            [{"id": 0, "start": 0, "end": 0, "text": "每天十分钟阅读，开阔看盘思路。", "locator": "第1段"}]
+        ),
+    )
+    db_session.add(job)
+    db_session.commit()
+    html = app_settings.job_workdir(job.id) / "source.html"
+    html.write_text(
+        "<!doctype html><html><head><title>壳</title></head><body><div id='app'></div></body></html>",
+        encoding="utf-8",
+    )
+    job.source_path = str(html)
+    db_session.commit()
+    response = client.get(f"/api/jobs/{job.id}/file")
+    assert response.status_code == 200
+    assert "html" in response.headers.get("content-type", "")
+    assert "每天十分钟阅读" in response.text
+    assert 'id="seg-0"' in response.text
+    raw = client.get(f"/api/jobs/{job.id}/file", params={"raw": True})
+    assert raw.status_code == 200
+    assert "id='app'" in raw.text
+
+
+def test_web_page_file_preview_uses_original_article_html(client, db_session, tmp_path, monkeypatch):
+    from app.config import settings as app_settings
+    from app.services.jsonutil import dumps
+
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    monkeypatch.setattr(app_settings, "download_dir", "")
+    job = Job(
+        title="美股大跌！重点是...",
+        source_url="https://mp.weixin.qq.com/s/demo",
+        source_type="web_page",
+        status="done",
+        transcript_json=dumps(
+            [{"id": 0, "start": 0, "end": 0, "text": "提取后的纯文本", "locator": "第1段"}]
+        ),
+    )
+    db_session.add(job)
+    db_session.commit()
+    html = app_settings.job_workdir(job.id) / "source.html"
+    html.write_text(
+        "<!doctype html><html><head><title>壳</title></head><body>"
+        '<div id="js_content" class="rich_media_content" style="visibility: hidden;">'
+        "<p>昨日回顾：昨日大盘低开震荡。</p>"
+        "</div></body></html>",
+        encoding="utf-8",
+    )
+    job.source_path = str(html)
+    db_session.commit()
+    response = client.get(f"/api/jobs/{job.id}/file")
+    assert response.status_code == 200
+    assert "昨日回顾：" in response.text
+    assert 'id="js_content"' in response.text
+    assert "提取后的纯文本" not in response.text
+    assert "vs-original-preview" in response.text
+
+
 def test_seeded_sites_and_profiles(client):
     profiles = client.get("/api/profiles").json()
     sites = client.get("/api/sites").json()
@@ -472,6 +575,175 @@ def test_pipeline_with_local_file(tmp_path, monkeypatch):
     assert "total" in timing
     assert "transcribing" in timing
     assert "summarizing" in timing
+    db.close()
+
+
+def test_pipeline_document_skips_summary_by_default(tmp_path, monkeypatch):
+    from app import database
+    from app.config import settings as app_settings
+
+    db_path = tmp_path / "doc.db"
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", session_factory)
+    monkeypatch.setattr("app.services.pipeline.SessionLocal", session_factory)
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    database.Base.metadata.create_all(engine)
+
+    source = tmp_path / "note.txt"
+    source.write_text("文档原文已经整理过了，直接入库即可。\n\n第二段也在。", encoding="utf-8")
+    db = session_factory()
+    job = Job(
+        title="笔记",
+        source_url=str(source),
+        source_path=str(source),
+        status="pending",
+        summarize_document=False,
+    )
+    db.add(job)
+    db.commit()
+    job_id = job.id
+    db.close()
+
+    class BoomSummarizer(Summarizer):
+        def summarize(self, segments, settings):
+            raise AssertionError("文档默认不应总结")
+
+    pipeline = Pipeline(extractor=FakeExtractor(), transcriber=FakeTranscriber(), summarizer=BoomSummarizer())
+    pipeline.run_job(job_id)
+
+    db = session_factory()
+    stored = db.get(Job, job_id)
+    assert stored.status == "done"
+    assert stored.source_type == "local_document"
+    assert not stored.summary_json
+    assert "整理过" in stored.transcript_json
+    timing = loads(stored.timing_json, {})
+    assert "extracting_text" in timing
+    assert "summarizing" not in timing
+    db.close()
+
+
+def test_pipeline_document_uses_extracted_title_when_auto_named(tmp_path, monkeypatch):
+    from app import database
+    from app.config import settings as app_settings
+    from app.services.pipeline import should_use_extracted_title
+
+    assert should_use_extracted_title("", "3y6r5wxqqgn") is True
+    assert should_use_extracted_title("3y6r5wxqqgn", "3y6r5wxqqgn") is True
+    assert should_use_extracted_title("未命名任务", "3y6r5wxqqgn") is True
+    assert should_use_extracted_title("我起的标题", "3y6r5wxqqgn") is False
+
+    db_path = tmp_path / "doc-title.db"
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", session_factory)
+    monkeypatch.setattr("app.services.pipeline.SessionLocal", session_factory)
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    database.Base.metadata.create_all(engine)
+
+    source = tmp_path / "3y6r5wxqqgn.html"
+    source.write_text(
+        "<!doctype html><html><head><title>壳</title></head><body>"
+        '<script>window.__NUXT__={data:[{data:{article_id:"abc",'
+        'title:"9月11日盘前纪要",content:"\\u003Cp\\u003E每天十分钟阅读，开阔看盘思路。\\u003C/p\\u003E"}}]}</script>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+    db = session_factory()
+    job = Job(title="", source_url=str(source), source_path=str(source), status="pending")
+    db.add(job)
+    db.commit()
+    job_id = job.id
+    db.close()
+
+    pipeline = Pipeline(extractor=FakeExtractor(), transcriber=FakeTranscriber(), summarizer=FakeSummarizer())
+    pipeline.run_job(job_id)
+    db = session_factory()
+    stored = db.get(Job, job_id)
+    assert stored.status == "done"
+    assert stored.title == "9月11日盘前纪要"
+    db.close()
+
+
+def test_pipeline_document_summarizes_when_checked(tmp_path, monkeypatch):
+    from app import database
+    from app.config import settings as app_settings
+
+    db_path = tmp_path / "doc-sum.db"
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", session_factory)
+    monkeypatch.setattr("app.services.pipeline.SessionLocal", session_factory)
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    database.Base.metadata.create_all(engine)
+
+    source = tmp_path / "note.txt"
+    source.write_text("文档正文需要总结。" * 8, encoding="utf-8")
+    db = session_factory()
+    job = Job(
+        title="笔记",
+        source_url=str(source),
+        source_path=str(source),
+        status="pending",
+        summarize_document=True,
+    )
+    db.add(job)
+    db.commit()
+    job_id = job.id
+    db.close()
+
+    pipeline = Pipeline(extractor=FakeExtractor(), transcriber=FakeTranscriber(), summarizer=FakeSummarizer())
+    pipeline.run_job(job_id)
+    db = session_factory()
+    stored = db.get(Job, job_id)
+    assert stored.status == "done"
+    assert "复盘" in stored.summary_json
+    timing = loads(stored.timing_json, {})
+    assert "summarizing" in timing
+    db.close()
+
+
+def test_pipeline_doc_plugin_missing_fails(tmp_path, monkeypatch):
+    from app import database
+    from app.config import settings as app_settings
+
+    db_path = tmp_path / "doc-plugin.db"
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", session_factory)
+    monkeypatch.setattr("app.services.pipeline.SessionLocal", session_factory)
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    monkeypatch.setattr("app.services.plugins.which_soffice", lambda plugin_root=None: "")
+    monkeypatch.setattr("app.services.plugins.platform.system", lambda: "Darwin")
+    database.Base.metadata.create_all(engine)
+
+    source = tmp_path / "old.doc"
+    source.write_bytes(b"\xd0\xcf\x11\xe0legacy-doc")
+    db = session_factory()
+    job = Job(
+        title="旧文档",
+        source_url=str(source),
+        source_path=str(source),
+        status="pending",
+        summarize_document=False,
+    )
+    db.add(job)
+    db.commit()
+    job_id = job.id
+    db.close()
+
+    pipeline = Pipeline(extractor=FakeExtractor(), transcriber=FakeTranscriber(), summarizer=FakeSummarizer())
+    pipeline.run_job(job_id)
+    db = session_factory()
+    stored = db.get(Job, job_id)
+    assert stored.status == "failed"
+    assert "LibreOffice" in stored.error
+    assert "设置页" in stored.error
     db.close()
 
 

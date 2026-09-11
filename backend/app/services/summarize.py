@@ -493,7 +493,14 @@ class OpenAICompatibleSummarizer(Summarizer):
         overview = ""
         client = openai_client(settings.summarize_api_key, settings.summarize_base_url)
         try:
-            meta = self._complete(client, settings, overview_prompt(), overview_input, require_filled_overview=True)
+            for_document = any((item.locator or "").strip() for item in segments)
+            meta = self._complete(
+                client,
+                settings,
+                overview_prompt(for_document=for_document),
+                overview_input,
+                require_filled_overview=True,
+            )
             title = meta.title
             overview = meta.overview
         except SummarizeError:

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine, migrate_job_columns
-from app.routers import jobs, knowledge, lexicon, profiles, schedule, settings as settings_router, sites
+from app.routers import jobs, knowledge, lexicon, plugins, profiles, schedule, settings as settings_router, sites
 from app.services.seed import seed_defaults
 from app.services.schedule import start_scheduler, stop_scheduler
 from app.services.sensevoice import start_sensevoice_prefetch
@@ -48,6 +48,7 @@ app.include_router(settings_router.router)
 app.include_router(lexicon.router)
 app.include_router(jobs.router)
 app.include_router(knowledge.router)
+app.include_router(plugins.router)
 app.include_router(schedule.router)
 
 

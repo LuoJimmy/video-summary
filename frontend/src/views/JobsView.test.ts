@@ -191,6 +191,18 @@ describe("任务列表筛选", () => {
     );
   });
 
+  it("本地上传不展示文件路径", async () => {
+    const el = await mountJobs([
+      makeJob({
+        author: "自己",
+        source_url: "/downloads/job-1/source.pdf",
+        source_type: "local_document",
+      }),
+    ]);
+    expect(el.querySelector(".list-item .msg")?.textContent).toBe("自己");
+    expect(el.textContent).not.toContain("/downloads/");
+  });
+
   it("按日期筛选时传本地日界的 utc 时间", async () => {
     const el = await mountJobs();
     vi.mocked(api.jobs).mockClear();
@@ -255,5 +267,25 @@ describe("任务列表筛选", () => {
       (el.querySelector("input[placeholder='标题 / 作者']") as HTMLInputElement)
         .value
     ).toBe("");
+  });
+});
+
+describe("文档来源", () => {
+  it("上传接受文档并默认不勾选总结", async () => {
+    const el = await mountJobs();
+    expect(el.textContent).toContain("文档生成 AI 总结");
+    const hint = el.querySelector(".info-tip") as HTMLButtonElement | null;
+    expect(hint).toBeTruthy();
+    expect(hint?.querySelector("svg")).toBeTruthy();
+    expect(hint?.querySelector(".info-tip-text")?.textContent).toContain(
+      "文档/网页默认直接入库原文；勾选后才调用总结模型。音视频始终会总结。"
+    );
+    const file = el.querySelector("input[type='file']") as HTMLInputElement;
+    expect(file.accept).toContain(".pdf");
+    expect(file.accept).toContain(".doc");
+    const box = el.querySelector("#summarize-document");
+    expect(box?.getAttribute("data-state") || box?.getAttribute("aria-checked")).not.toBe(
+      "true"
+    );
   });
 });

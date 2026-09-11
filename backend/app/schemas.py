@@ -103,6 +103,7 @@ class JobCreateIn(BaseModel):
     auth_profile_id: str | None = None
     media_url_override: str = ""
     domain_id: str = ""
+    summarize_document: bool = False
 
 
 class JobUpdateIn(BaseModel):
@@ -115,6 +116,7 @@ class TranscriptSegment(BaseModel):
     start: float
     end: float
     text: str
+    locator: str = ""
 
 
 class SummaryChapter(BaseModel):
@@ -123,6 +125,7 @@ class SummaryChapter(BaseModel):
     end_segment: int
     start: float = 0
     end: float = 0
+    locator: str = ""
     bullets: list[str] = Field(default_factory=list)
 
 
@@ -132,6 +135,7 @@ class SummaryKeyPoint(BaseModel):
     end_segment: int
     start: float = 0
     end: float = 0
+    locator: str = ""
 
 
 class SummaryResult(BaseModel):
@@ -161,6 +165,7 @@ class JobOut(BaseModel):
     timing: dict[str, float] = Field(default_factory=dict)
     started_at: datetime | None = None
     source_created_at: datetime | None = None
+    summarize_document: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -208,6 +213,7 @@ class KnowledgeHit(BaseModel):
     start: float = 0
     end: float = 0
     segment_id: int | None = None
+    locator: str = ""
 
 
 class KnowledgeSearchOut(BaseModel):
@@ -233,6 +239,16 @@ class KnowledgeChatIn(BaseModel):
 class KnowledgeChatOut(BaseModel):
     answer: str
     citations: list[KnowledgeHit] = Field(default_factory=list)
+
+
+class PluginOut(BaseModel):
+    id: str
+    title: str
+    description: str = ""
+    size_hint: str = ""
+    status: str
+    error: str = ""
+    soffice: str = ""
 
 
 class LexiconFix(BaseModel):

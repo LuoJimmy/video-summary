@@ -32,6 +32,20 @@ def test_attach_timestamps_uses_segment_index_not_model_clock():
     assert mapped.key_points[0].end == 55
 
 
+def test_attach_timestamps_copies_locator():
+    segments = [
+        TranscriptSegment(id=0, start=0, end=0, text="开场", locator="第1页"),
+        TranscriptSegment(id=1, start=0, end=0, text="策略", locator="第2页"),
+    ]
+    summary = SummaryResult(
+        chapters=[SummaryChapter(title="策略段", start_segment=1, end_segment=1, bullets=["要点"])],
+        key_points=[SummaryKeyPoint(text="风险", start_segment=1, end_segment=1)],
+    )
+    mapped = attach_timestamps(summary, segments)
+    assert mapped.chapters[0].locator == "第2页"
+    assert mapped.key_points[0].locator == "第2页"
+
+
 def test_attach_timestamps_clamps_out_of_range():
     segments = [TranscriptSegment(id=0, start=0, end=5, text="a")]
     summary = SummaryResult(

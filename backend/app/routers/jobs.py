@@ -4,7 +4,7 @@ import shutil
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Query as SAQuery, Session
 
@@ -15,6 +15,14 @@ from app.schemas import JobCreateIn, JobListOut, JobMediaOut, JobOut, JobUpdateI
 from app.serializers import job_out
 from app.services.authctx import build_auth
 from app.services.domain import job_domain_id
+from app.services.document import (
+    DocumentError,
+    PREVIEW_TYPES,
+    office_preview_html,
+    resolve_preview_file,
+    webpage_preview_html,
+)
+from app.services.ingest.base import is_document_source, local_source_type
 from app.services.ingest import resolve_media
 from app.services.pipeline import get_pipeline
 from app.services.media import MediaError, probe_creation_time
@@ -189,6 +197,55 @@ def play_job_media(job_id: str, db: Session = Depends(get_db)) -> FileResponse:
     )
 
 
+@router.get("/{job_id}/file")
+def preview_job_file(
+    job_id: str,
+    raw: bool = Query(False),
+    db: Session = Depends(get_db),
+) -> Response:
+    row = db.get(Job, job_id)
+    if row is None:
+        raise HTTPException(404, "任务不存在")
+    if not is_document_source(row.source_type):
+        raise HTTPException(400, "该任务不是文档，无法预览原件")
+    try:
+        path = resolve_preview_file(job_id, row.source_path)
+    except DocumentError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    suffix = path.suffix.lower()
+    filename = path.name or f"source{suffix}"
+    if not raw and suffix in {".doc", ".docx"}:
+        try:
+            html = office_preview_html(path)
+        except Exception as exc:
+            raise HTTPException(502, f"无法生成 Word 预览：{exc}") from exc
+        return HTMLResponse(content=html, headers={"Content-Disposition": f'inline; filename="{path.stem}.html"'})
+    if not raw and row.source_type == "web_page":
+        try:
+            html = webpage_preview_html(
+                path,
+                title=row.title,
+                transcript_json=row.transcript_json,
+                source_url=row.source_url or "",
+            )
+        except Exception as exc:
+            raise HTTPException(502, f"无法生成网页预览：{exc}") from exc
+        return HTMLResponse(
+            content=html,
+            headers={
+                "Content-Disposition": f'inline; filename="{path.stem}.html"',
+                "Cache-Control": "no-store",
+            },
+        )
+    media_type = PREVIEW_TYPES.get(suffix, "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type="inline",
+    )
+
+
 @router.post("/preview", response_model=ResolvePreview)
 def preview_source(payload: JobCreateIn, db: Session = Depends(get_db)) -> ResolvePreview:
     if not payload.source_url.strip() and not payload.media_url_override.strip():
@@ -223,6 +280,7 @@ def create_job(payload: JobCreateIn, background: BackgroundTasks, db: Session = 
         auth_profile_id=payload.auth_profile_id,
         domain_id=job_domain_id(payload.domain_id),
         media_url_override=payload.media_url_override.strip(),
+        summarize_document=payload.summarize_document,
         status="pending",
         stage="queued",
     )
@@ -243,14 +301,18 @@ async def upload_job(
     author: str = Form(""),
     source_created_at: str = Form(""),
     domain_id: str = Form(""),
+    summarize_document: str = Form("false"),
 ) -> JobOut:
+    suffix = Path(file.filename or "source.bin").suffix or ".bin"
+    source_type = local_source_type(Path(f"source{suffix}")) if suffix else "local_file"
     job = Job(
         title=title or (file.filename or "本地文件"),
         author=author.strip(),
-        source_type="local_file",
+        source_type=source_type,
         status="pending",
         stage="queued",
         domain_id=job_domain_id(domain_id),
+        summarize_document=_form_bool(summarize_document),
     )
     stamp_job_start(job)
     db.add(job)
@@ -258,7 +320,6 @@ async def upload_job(
     db.refresh(job)
     folder = settings.uploads_path() / job.id
     folder.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename or "source.bin").suffix or ".bin"
     dest = folder / f"source{suffix}"
     dest.write_bytes(await file.read())
     source_created = (
@@ -287,6 +348,7 @@ def resummarize_job(job_id: str, background: BackgroundTasks, db: Session = Depe
     job.status = "running"
     job.stage = "summarizing"
     job.error = ""
+    job.summarize_document = True
     db.commit()
     db.refresh(job)
     background.add_task(get_pipeline().resummarize_job, job.id)
@@ -306,9 +368,13 @@ def retranscribe_job(
     clear_cancel(job.id)
     stamp_job_start(job)
     job.status = "running"
-    job.stage = "transcribing"
     job.error = ""
-    job.progress = 50
+    if is_document_source(job.source_type):
+        job.stage = "extracting_text"
+        job.progress = 40
+    else:
+        job.stage = "transcribing"
+        job.progress = 50
     db.commit()
     db.refresh(job)
     background.add_task(get_pipeline().retranscribe_job, job.id, continue_after)
@@ -381,3 +447,7 @@ def delete_job(job_id: str, db: Session = Depends(get_db)) -> dict:
     db.delete(job)
     db.commit()
     return {"ok": True}
+
+
+def _form_bool(value: str) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}

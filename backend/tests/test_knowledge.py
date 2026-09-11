@@ -78,3 +78,22 @@ def test_search_knowledge_paginates_documents():
     paged = search_knowledge(jobs[:2], page=1, page_size=2, total=3)
     assert paged.job_count == 3
     assert [item.title for item in paged.documents] == ["课1", "课2"]
+
+
+def test_retrieve_document_uses_locator_not_clock():
+    job = Job(
+        id="doc1",
+        title="研报",
+        status="done",
+        transcript_json=dumps(
+            [{"id": 0, "start": 0, "end": 0, "text": "利率下行对估值有支撑", "locator": "第3页"}]
+        ),
+    )
+    hits = retrieve([job], "利率估值", limit=5)
+    assert hits
+    assert hits[0].locator == "第3页"
+    from app.services.knowledge import _format_context
+
+    context = _format_context(hits)
+    assert "第3页" in context
+    assert "00:00" not in context

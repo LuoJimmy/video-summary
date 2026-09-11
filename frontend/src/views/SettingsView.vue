@@ -4,11 +4,13 @@ import {
   api,
   type AppSettings,
   type LexiconFix,
+  type PluginInfo,
   type ScheduleConfig,
   type ScheduleLog,
 } from "../api";
 import { emptyDomainPack, type DomainPack } from "../utils/domain";
 import { ChevronRight, Loader2, Plus, Trash2 } from "@lucide/vue";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -88,6 +90,9 @@ const PENDING_RUN_ID = "pending-run";
 let runWatching = false;
 const askingClearLogs = ref(false);
 const clearingLogs = ref(false);
+const plugins = ref<PluginInfo[]>([]);
+const pluginBusyId = ref("");
+let pluginTimer: number | undefined;
 const maxJobOptions = Array.from({ length: 20 }, (_, index) =>
   String(index + 1)
 );
@@ -201,10 +206,12 @@ onMounted(async () => {
   }
   await loadLexicon();
   await loadSchedule();
+  await loadPlugins();
 });
 
 onBeforeUnmount(() => {
   runWatching = false;
+  if (pluginTimer) window.clearInterval(pluginTimer);
 });
 
 function applyLocalTranscribe(model: string) {
@@ -281,6 +288,60 @@ async function loadSchedule() {
     scheduleLogs.value = logs;
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "无法加载定时拉取设置");
+  }
+}
+
+function pluginStatusLabel(status: string) {
+  if (status === "ready") return "已就绪";
+  if (status === "installing") return "安装中";
+  if (status === "failed") return "失败";
+  return "未安装";
+}
+
+function syncPluginPoll(items: PluginInfo[]) {
+  const installing = items.some((item) => item.status === "installing");
+  if (installing && pluginTimer === undefined) {
+    pluginTimer = window.setInterval(() => {
+      void loadPlugins();
+    }, 2000);
+  }
+  if (!installing && pluginTimer !== undefined) {
+    window.clearInterval(pluginTimer);
+    pluginTimer = undefined;
+  }
+}
+
+async function loadPlugins() {
+  try {
+    plugins.value = await api.plugins();
+    syncPluginPoll(plugins.value);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "无法加载文档插件");
+  }
+}
+
+async function installDocPlugin(id: string) {
+  pluginBusyId.value = id;
+  try {
+    await api.installPlugin(id);
+    await loadPlugins();
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "安装插件失败");
+  } finally {
+    pluginBusyId.value = "";
+  }
+}
+
+async function uninstallDocPlugin(id: string) {
+  pluginBusyId.value = id;
+  try {
+    await api.uninstallPlugin(id);
+    await loadPlugins();
+    toast.success("已卸载插件");
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "卸载插件失败");
+  } finally {
+    pluginBusyId.value = "";
   }
 }
 
@@ -1167,6 +1228,53 @@ const highlightPhrasesText = computed({
               <p>{{ item.summary }}</p>
             </li>
           </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>文档插件</h3>
+      <p class="msg mb-3">
+        扫描 OCR 和旧版 Word 按需装到数据目录，不打进默认镜像。首次用到扫描 PDF 或
+        .doc 时也会自动安装。
+      </p>
+      <div v-if="!plugins.length" class="msg">正在读取插件状态…</div>
+      <div
+        v-for="item in plugins"
+        :key="item.id"
+        class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+      >
+        <div class="min-w-0">
+          <div class="mb-1 flex flex-wrap items-center gap-2">
+            <strong>{{ item.title }}</strong>
+            <Badge
+              variant="outline"
+              :class="{
+                ok: item.status === 'ready',
+                bad: item.status === 'failed',
+                warn: item.status === 'installing',
+              }"
+              >{{ pluginStatusLabel(item.status) }}</Badge
+            >
+          </div>
+          <p class="msg">{{ item.description }}</p>
+          <p class="msg">{{ item.size_hint }}</p>
+          <p v-if="item.error" class="error">{{ item.error }}</p>
+        </div>
+        <div class="row shrink-0">
+          <Button
+            type="button"
+            :disabled="pluginBusyId === item.id || item.status === 'installing'"
+            @click="installDocPlugin(item.id)"
+            >{{ item.status === "ready" ? "重新安装" : "安装" }}</Button
+          >
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="pluginBusyId === item.id || item.status === 'missing'"
+            @click="uninstallDocPlugin(item.id)"
+            >卸载</Button
+          >
         </div>
       </div>
     </section>

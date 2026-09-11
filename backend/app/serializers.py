@@ -62,6 +62,7 @@ def job_out(row: Job, *, brief: bool = False) -> JobOut:
         timing=loads(getattr(row, "timing_json", "") or "", {}),
         started_at=getattr(row, "started_at", None),
         source_created_at=getattr(row, "source_created_at", None),
+        summarize_document=bool(getattr(row, "summarize_document", False)),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

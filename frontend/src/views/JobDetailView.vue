@@ -17,6 +17,7 @@ import { api, type Job } from "../api";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
 import JobTitleEditor from "../components/JobTitleEditor.vue";
 import VideoPlayer from "../components/VideoPlayer.vue";
+import DocumentPreview from "../components/DocumentPreview.vue";
 import {
   formatOverviewDocument,
   setOverviewHighlight,
@@ -32,9 +33,18 @@ import {
   statusLabel,
 } from "../utils/time";
 import { toast } from "vue-sonner";
+import { documentPreviewKind, isDocumentSource, locatorPage, publicSourceUrl, sourceTypeLabel } from "../utils/source";
 
 const route = useRoute();
 const router = useRouter();
+const fromKnowledge = computed(() => {
+  const raw = route.query.from;
+  return (Array.isArray(raw) ? raw[0] : raw) === "knowledge";
+});
+const backTo = computed(() => (fromKnowledge.value ? "/knowledge" : "/"));
+const backLabel = computed(() =>
+  fromKnowledge.value ? "返回知识库" : "返回任务列表"
+);
 const job = ref<Job | null>(null);
 const player = ref<{ seek: (n: number) => void } | null>(null);
 const askingDelete = ref(false);
@@ -48,14 +58,33 @@ const overviewHtml = computed(() =>
   formatOverviewDocument(job.value?.summary?.overview || "")
 );
 const hasTranscript = computed(() => Boolean(job.value?.transcript.length));
+const isDocument = computed(() =>
+  isDocumentSource(job.value?.source_type)
+);
+const highlightedSeg = ref<number | null>(null);
+const previewPage = ref<number | null>(null);
+const previewSeg = ref<number | null>(null);
 const showTranscript = ref(true);
 const domainPresets = ref<DomainPack[]>([]);
 const jobBusy = computed(() =>
   Boolean(job.value && isJobActive(job.value.status))
 );
-const playerSrc = computed(
-  () => playSrc.value || playbackSrcFromJob(job.value)
+const playerSrc = computed(() => {
+  if (isDocument.value) return "";
+  return playSrc.value || playbackSrcFromJob(job.value);
+});
+const documentFileSrc = computed(() => {
+  if (!job.value || !isDocument.value) return "";
+  return `/api/jobs/${job.value.id}/file`;
+});
+const previewKind = computed(() =>
+  documentPreviewKind(
+    job.value?.source_type,
+    job.value?.source_url,
+    job.value?.media_url
+  )
 );
+const originalHttpUrl = computed(() => publicSourceUrl(job.value?.source_url));
 const elapsedLabel = computed(() => {
   if (!job.value || !jobBusy.value) return "";
   return formatDuration(jobElapsedSeconds(job.value, nowMs.value));
@@ -65,7 +94,7 @@ const sourceMeta = computed(() => {
   return [
     formatDateTime(job.value.source_created_at),
     job.value.author?.trim(),
-    job.value.source_url,
+    publicSourceUrl(job.value.source_url),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -82,6 +111,8 @@ const timingRows = computed(() => {
   const keys = [
     "resolving",
     "extracting",
+    "extracting_text",
+    "installing_plugin",
     "transcribing",
     "proofreading",
     "summarizing",
@@ -144,7 +175,10 @@ async function load() {
 }
 
 async function refreshPlayback() {
-  if (!job.value) return;
+  if (!job.value || isDocument.value) {
+    assignPlaySrc("");
+    return;
+  }
   if (jobBusy.value) {
     const next = playbackSrcFromJob(job.value);
     assignPlaySrc(
@@ -181,15 +215,61 @@ async function loadAndSeek() {
   seekFromQuery();
 }
 
-function seek(seconds: number) {
-  player.value?.seek(seconds);
+function placeLabel(item: {
+  locator?: string;
+  start?: number;
+  start_segment?: number;
+  id?: number;
+}) {
+  if (item.locator) return item.locator;
+  if (isDocument.value) {
+    const segId = item.start_segment ?? item.id;
+    const seg = job.value?.transcript.find((row) => row.id === segId);
+    return seg?.locator || "定位";
+  }
+  return formatTimestamp(item.start || 0);
+}
+
+function goTo(item: {
+  start?: number;
+  start_segment?: number;
+  id?: number;
+  locator?: string;
+}) {
+  if (isDocument.value) {
+    const segId = item.start_segment ?? item.id;
+    if (segId === undefined || segId === null) return;
+    highlightedSeg.value = Number(segId);
+    previewSeg.value = Number(segId);
+    const loc =
+      item.locator ||
+      job.value?.transcript.find((row) => row.id === Number(segId))?.locator;
+    previewPage.value = locatorPage(loc);
+    document.getElementById("doc-preview")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+    window.setTimeout(() => {
+      if (highlightedSeg.value === Number(segId)) highlightedSeg.value = null;
+    }, 1600);
+    return;
+  }
+  player.value?.seek(item.start || 0);
 }
 
 function seekFromQuery() {
+  const segRaw = route.query.seg;
+  if (segRaw != null && String(segRaw)) {
+    const value = Number(Array.isArray(segRaw) ? segRaw[0] : segRaw);
+    if (Number.isFinite(value)) {
+      goTo({ start: 0, id: value, start_segment: value });
+      return;
+    }
+  }
   const raw = route.query.t;
   const value = Number(Array.isArray(raw) ? raw[0] : raw);
   if (!Number.isFinite(value) || value < 0) return;
-  player.value?.seek(value);
+  goTo({ start: value });
 }
 
 function onPlayerReady() {
@@ -240,7 +320,7 @@ async function confirmDelete() {
   try {
     await api.deleteJob(job.value.id);
     askingDelete.value = false;
-    await router.push("/");
+    await router.push(backTo.value);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "删除失败");
     askingDelete.value = false;
@@ -292,6 +372,12 @@ watch(
     if (job.value) seekFromQuery();
   }
 );
+watch(
+  () => route.query.seg,
+  () => {
+    if (job.value) seekFromQuery();
+  }
+);
 
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer);
@@ -302,7 +388,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="page-title">
     <Button variant="ghost" size="icon" class="icon-btn" as-child>
-      <router-link to="/" aria-label="返回任务列表" title="返回任务列表">
+      <router-link :to="backTo" :aria-label="backLabel" :title="backLabel">
         <ChevronLeft />
       </router-link>
     </Button>
@@ -324,7 +410,9 @@ onBeforeUnmount(() => {
         >
           {{ statusLabel(job.status, job.stage) }}
         </Badge>
-        <Badge variant="secondary">{{ job.source_type || "未知类型" }}</Badge>
+        <Badge variant="secondary">{{
+          sourceTypeLabel(job.source_type)
+        }}</Badge>
         <Button
           v-if="jobBusy"
           variant="destructive"
@@ -332,11 +420,11 @@ onBeforeUnmount(() => {
           @click="cancel"
           >取消任务</Button
         >
-        <Button v-if="canRetrySteps" type="button" @click="retranscribe"
-          >重新转写</Button
-        >
+        <Button v-if="canRetrySteps" type="button" @click="retranscribe">{{
+          isDocument ? "重新提取" : "重新转写"
+        }}</Button>
         <Button
-          v-if="canReuseTranscript"
+          v-if="canReuseTranscript && !isDocument"
           variant="outline"
           type="button"
           @click="proofread"
@@ -347,7 +435,7 @@ onBeforeUnmount(() => {
           variant="outline"
           type="button"
           @click="resummarize"
-          >重新总结</Button
+          >{{ job.summary ? "重新总结" : "生成总结" }}</Button
         >
         <Button
           v-if="job.status === 'failed' || job.status === 'cancelled'"
@@ -404,6 +492,38 @@ onBeforeUnmount(() => {
       </p>
     </section>
 
+    <section
+      v-if="isDocument && documentFileSrc"
+      id="doc-preview"
+      class="card"
+    >
+      <div class="row mb-3">
+        <strong>原件预览</strong>
+        <Button v-if="originalHttpUrl" variant="outline" size="sm" as-child>
+          <a :href="originalHttpUrl" target="_blank" rel="noreferrer"
+            >打开原文</a
+          >
+        </Button>
+        <Button variant="outline" size="sm" as-child>
+          <a
+            :href="`${documentFileSrc}?raw=1`"
+            target="_blank"
+            rel="noreferrer"
+            >下载原文件</a
+          >
+        </Button>
+      </div>
+      <DocumentPreview
+        :src="documentFileSrc"
+        :kind="previewKind"
+        :page="previewPage"
+        :segment-id="previewSeg"
+      />
+      <p class="msg">
+        点击章节、要点或正文标签可定位对应段落；PDF 会跳到对应页。
+      </p>
+    </section>
+
     <section v-if="job.summary" class="card">
       <h2>{{ job.summary.title }}</h2>
       <div class="overview" v-html="overviewHtml" />
@@ -418,8 +538,8 @@ onBeforeUnmount(() => {
             variant="secondary"
             size="sm"
             type="button"
-            @click="seek(chapter.start)"
-            >{{ formatTimestamp(chapter.start) }}</Button
+            @click="goTo(chapter)"
+            >{{ placeLabel(chapter) }}</Button
           >
           <strong>{{ chapter.title }}</strong>
         </p>
@@ -441,8 +561,8 @@ onBeforeUnmount(() => {
             variant="secondary"
             size="sm"
             type="button"
-            @click="seek(point.start)"
-            >{{ formatTimestamp(point.start) }}</Button
+            @click="goTo(point)"
+            >{{ placeLabel(point) }}</Button
           >
           <span>{{ point.text }}</span>
         </p>
@@ -450,15 +570,21 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-if="showTranscript && job.transcript.length" class="card">
-      <h3>转写</h3>
-      <p v-for="seg in job.transcript" :key="seg.id" class="text-line">
+      <h3>{{ isDocument ? "正文" : "转写" }}</h3>
+      <p
+        v-for="seg in job.transcript"
+        :id="`seg-${seg.id}`"
+        :key="seg.id"
+        class="text-line"
+        :class="{ 'seg-active': highlightedSeg === seg.id }"
+      >
         <Button
           class="time-btn"
           variant="secondary"
           size="sm"
           type="button"
-          @click="seek(seg.start)"
-          >{{ formatTimestamp(seg.start) }}</Button
+          @click="goTo(seg)"
+          >{{ placeLabel(seg) }}</Button
         >
         <span>{{ seg.text }}</span>
       </p>

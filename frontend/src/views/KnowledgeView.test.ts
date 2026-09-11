@@ -139,4 +139,45 @@ describe("知识库任务列表分页", () => {
     expect(el.querySelector(".pager")?.textContent).toContain("共 1 条");
     expect(el.querySelector(".pager")?.textContent).not.toContain("下一页");
   });
+
+  it("文档引用显示 locator 并链到段落", async () => {
+    const el = await mountKnowledge();
+    vi.mocked(api.knowledgeChat).mockResolvedValue({
+      answer: "利率下行对估值有支撑",
+      citations: [
+        {
+          job_id: "job-1",
+          title: "研报",
+          kind: "transcript",
+          kind_label: "转写",
+          text: "利率下行对估值有支撑",
+          snippet: "利率下行对估值有支撑",
+          start: 0,
+          end: 0,
+          segment_id: 0,
+          locator: "第3页",
+        },
+      ],
+    });
+    const input = el.querySelector("textarea") as HTMLTextAreaElement;
+    input.value = "利率";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    clickNamed(el, "发送");
+    await flush();
+    expect(el.textContent).toContain("第3页");
+    expect(el.textContent).not.toContain("00:00");
+    const link = el.querySelector(".cite-link") as HTMLAnchorElement | null;
+    expect(link?.getAttribute("href")).toContain("/jobs/job-1");
+    expect(link?.getAttribute("href")).toContain("seg=0");
+    expect(link?.getAttribute("href")).toContain("from=knowledge");
+  });
+
+  it("任务标题链到对应详情并带回知识库来源", async () => {
+    const el = await mountKnowledge();
+    const link = [...el.querySelectorAll("a")].find((item) =>
+      item.textContent?.includes("行情课")
+    );
+    expect(link?.getAttribute("href")).toBe("/jobs/job-1?from=knowledge");
+  });
 });

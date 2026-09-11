@@ -92,6 +92,8 @@ describe("statusLabel", () => {
   it("maps pipeline stages", () => {
     expect(statusLabel("done", "done")).toBe("已完成");
     expect(statusLabel("running", "transcribing")).toBe("转写中");
+    expect(statusLabel("running", "extracting_text")).toBe("提取正文");
+    expect(statusLabel("running", "installing_plugin")).toBe("安装插件");
     expect(statusLabel("running", "proofreading")).toBe("校对转写");
     expect(statusLabel("cancelled", "cancelled")).toBe("已取消");
   });

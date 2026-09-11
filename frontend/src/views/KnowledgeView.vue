@@ -160,10 +160,30 @@ function clearChat() {
   messages.value = [];
 }
 
-function jobLink(jobId: string, start?: number) {
-  if (start !== undefined && start >= 0)
-    return `/jobs/${jobId}?t=${Math.floor(start)}`;
-  return `/jobs/${jobId}`;
+function jobLink(hit: {
+  job_id: string;
+  start?: number;
+  segment_id?: number | null;
+  locator?: string;
+}) {
+  const query = new URLSearchParams({ from: "knowledge" });
+  if (hit.locator && hit.segment_id != null)
+    query.set("seg", String(hit.segment_id));
+  else if (hit.segment_id != null && !(hit.start && hit.start > 0))
+    query.set("seg", String(hit.segment_id));
+  else if (hit.start !== undefined && hit.start > 0)
+    query.set("t", String(Math.floor(hit.start)));
+  return `/jobs/${hit.job_id}?${query.toString()}`;
+}
+
+function citePlace(hit: {
+  locator?: string;
+  start: number;
+  kind: string;
+}) {
+  if (hit.locator) return hit.locator;
+  if (hit.start > 0) return formatTimestamp(hit.start);
+  return "";
 }
 
 async function scrollToEnd() {
@@ -175,7 +195,7 @@ async function scrollToEnd() {
 <template>
   <h1>知识库</h1>
   <p class="sub">
-    基于你本机转写的私有资料对话。答案只来自当前领域里已完成的任务，不会去网上搜。
+    基于你本机转写和导入文档的私有资料对话。答案只来自当前领域里已完成的任务，不会去网上搜。
   </p>
 
   <section class="card mb-3">
@@ -203,7 +223,7 @@ async function scrollToEnd() {
       <div v-if="!messages.length" class="msg">
         可以问：「{{
           exampleQuestions.join("」「")
-        }}」。有转写的任务会作为资料。
+        }}」。有转写或导入文档的任务会作为资料。
       </div>
       <div
         v-for="(item, index) in messages"
@@ -224,14 +244,12 @@ async function scrollToEnd() {
               v-for="(hit, cIndex) in item.citations"
               :key="cIndex"
               class="cite-link"
-              :to="jobLink(hit.job_id, hit.start)"
+              :to="jobLink(hit)"
             >
               <Badge variant="secondary">{{ hit.kind_label }}</Badge>
-              <span
-                v-if="hit.kind === 'transcript' || hit.start > 0"
-                class="cite-time"
-                >{{ formatTimestamp(hit.start) }}</span
-              >
+              <span v-if="citePlace(hit)" class="cite-time">{{
+                citePlace(hit)
+              }}</span>
               {{ hit.title }} · {{ hit.snippet }}
             </router-link>
           </div>
@@ -265,7 +283,7 @@ async function scrollToEnd() {
   <section v-for="doc in documents" :key="doc.job_id" class="card mt-2">
     <div class="list-item border-0 p-0!">
       <div class="list-main">
-        <router-link :to="jobLink(doc.job_id)"
+        <router-link :to="jobLink(doc)"
           ><strong>{{ doc.title }}</strong></router-link
         >
         <div class="msg">

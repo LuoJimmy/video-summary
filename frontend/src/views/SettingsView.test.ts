@@ -30,6 +30,9 @@ vi.mock("../api", () => ({
     runSchedule: vi.fn(),
     scheduleLogs: vi.fn(),
     clearScheduleLogs: vi.fn(),
+    plugins: vi.fn(),
+    installPlugin: vi.fn(),
+    uninstallPlugin: vi.fn(),
   },
 }));
 
@@ -103,6 +106,17 @@ async function mountSettings(
   });
   vi.mocked(api.schedule).mockResolvedValue(sampleSchedule);
   vi.mocked(api.scheduleLogs).mockResolvedValue(logs);
+  vi.mocked(api.plugins).mockResolvedValue([
+    {
+      id: "ocr",
+      title: "扫描件 OCR",
+      description: "识别扫描 PDF",
+      size_hint: "约 100MB",
+      status: "missing",
+      error: "",
+      soffice: "",
+    },
+  ]);
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -307,5 +321,14 @@ describe("设置页模型限制说明", () => {
     expect(toast.error).toHaveBeenCalled();
     expect(runBtn?.disabled).toBe(false);
     expect(runBtn?.textContent).toContain("立即执行");
+  });
+});
+
+describe("文档插件", () => {
+  it("展示插件卡片和未安装状态", async () => {
+    const el = await mountSettings(localSettings);
+    expect(el.textContent).toContain("文档插件");
+    expect(el.textContent).toContain("扫描件 OCR");
+    expect(el.textContent).toContain("未安装");
   });
 });

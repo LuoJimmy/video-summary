@@ -770,6 +770,70 @@ h3 {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: help;
+  line-height: 0;
+}
+.info-tip svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+.info-tip:hover,
+.info-tip:focus,
+.info-tip:focus-visible {
+  color: var(--text);
+  outline: none;
+}
+.info-tip:focus-visible {
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.info-tip-text {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 0.4rem);
+  z-index: 20;
+  width: max-content;
+  max-width: min(18rem, 70vw);
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 10px 24px color-mix(in srgb, #000 16%, transparent);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-2px, -50%);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease,
+    visibility 0.12s;
+}
+.info-tip:hover .info-tip-text,
+.info-tip:focus .info-tip-text,
+.info-tip:focus-visible .info-tip-text {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(0, -50%);
+}
 .error {
   color: var(--bad);
   overflow-wrap: anywhere;
@@ -975,17 +1039,38 @@ ol.overview-list {
   background: #000;
   border-radius: var(--radius);
 }
+.doc-preview {
+  width: 100%;
+  min-height: 420px;
+  height: min(70vh, 640px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+#doc-preview {
+  scroll-margin-top: var(--space-6);
+}
 .text-line {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   margin: var(--space-2) 0;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
+.text-line > span {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+}
 .text-line .time-btn {
   flex: 0 0 auto;
   margin: 2px 0 0;
+}
+.text-line.seg-active {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-2);
 }
 .chapter-block {
   margin-top: var(--space-4);
@@ -1217,6 +1302,10 @@ label.check small {
     max-height: none;
     aspect-ratio: 16 / 9;
     height: auto;
+  }
+  .doc-preview {
+    min-height: 280px;
+    height: min(60dvh, 480px);
   }
   .chat-thread {
     min-height: 180px;

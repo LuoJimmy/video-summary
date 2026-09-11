@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowDown, ArrowUp } from "@lucide/vue";
+import { ArrowDown, ArrowUp, Info } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -16,6 +17,7 @@ import {
 import { api, type Job, type ResolvePreview, type Site } from "../api";
 import type { DomainPack } from "../utils/domain";
 import { emptyDomainPack } from "../utils/domain";
+import { publicSourceUrl } from "../utils/source";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
 import JobTitleEditor from "../components/JobTitleEditor.vue";
 import {
@@ -43,6 +45,7 @@ const domainId = ref("a-share");
 const domainPresets = ref<DomainPack[]>([emptyDomainPack()]);
 const preview = ref<ResolvePreview | null>(null);
 const file = ref<File | null>(null);
+const summarizeDocument = ref(false);
 const deleting = ref<Job | null>(null);
 const nowMs = ref(Date.now());
 const filterTitle = ref("");
@@ -248,6 +251,7 @@ async function createFromUrl() {
       author: author.value,
       site_id: siteId.value || null,
       domain_id: domainId.value || "a-share",
+      summarize_document: summarizeDocument.value,
     });
     await router.push(`/jobs/${job.id}`);
   } catch (err) {
@@ -257,13 +261,18 @@ async function createFromUrl() {
 
 async function createFromFile() {
   if (!file.value) return;
-  const job = await api.uploadJob(
-    file.value,
-    title.value || file.value.name,
-    domainId.value || "a-share",
-    author.value
-  );
-  await router.push(`/jobs/${job.id}`);
+  try {
+    const job = await api.uploadJob(
+      file.value,
+      title.value || file.value.name,
+      domainId.value || "a-share",
+      author.value,
+      summarizeDocument.value
+    );
+    await router.push(`/jobs/${job.id}`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "上传失败");
+  }
 }
 
 function setSiteId(value: string | null) {
@@ -295,7 +304,9 @@ function setFilterSort(value: string | null) {
 }
 
 function jobSourceLine(job: Job) {
-  return [job.author?.trim(), job.source_url].filter(Boolean).join(" · ");
+  return [job.author?.trim(), publicSourceUrl(job.source_url)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 onMounted(async () => {
@@ -318,7 +329,8 @@ onBeforeUnmount(() => {
 <template>
   <h1>任务</h1>
   <p class="sub">
-    支持本地文件、线上视频、HLS、B 站，以及已配置登录态的站点页面。
+    支持本地文件、线上视频、HLS、B
+    站，以及 PDF / Word / Markdown / 网页。文档默认直接入库原文。
   </p>
   <section class="card">
     <div class="grid two">
@@ -379,6 +391,32 @@ onBeforeUnmount(() => {
         </Select>
       </div>
     </div>
+    <div class="mt-4 flex items-center gap-2">
+      <Checkbox
+        id="summarize-document"
+        :checked="summarizeDocument"
+        @update:checked="
+          (value: boolean | 'indeterminate') =>
+            (summarizeDocument = value === true)
+        "
+      />
+      <Label for="summarize-document">文档生成 AI 总结</Label>
+      <button
+        type="button"
+        class="info-tip"
+        aria-label="文档总结说明"
+        aria-describedby="summarize-document-hint"
+      >
+        <Info aria-hidden="true" />
+        <span
+          id="summarize-document-hint"
+          class="info-tip-text"
+          role="tooltip"
+        >
+          文档/网页默认直接入库原文；勾选后才调用总结模型。音视频始终会总结。
+        </span>
+      </button>
+    </div>
     <div class="row mt-4">
       <Button variant="outline" type="button" @click="doPreview">预解析</Button>
       <Button type="button" @click="createFromUrl">开始转写总结</Button>
@@ -392,10 +430,10 @@ onBeforeUnmount(() => {
 
   <section class="card">
     <div class="field">
-      <Label>或上传本地视频/音频</Label>
+      <Label>或上传本地视频 / 音频 / 文档</Label>
       <Input
         type="file"
-        accept="video/*,audio/*"
+        accept="video/*,audio/*,.pdf,.doc,.docx,.md,.txt,.html,.htm,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/html"
         @change="file = ($event.target as HTMLInputElement).files?.[0] || null"
       />
     </div>

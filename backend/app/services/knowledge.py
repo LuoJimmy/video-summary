@@ -38,14 +38,15 @@ class _Chunk:
     start: float = 0
     end: float = 0
     segment_id: int | None = None
+    locator: str = ""
     score: float = 0
 
 
-CHAT_SYSTEM = """你是用户的私人知识库助手。资料全部来自用户自己转写的视频，只存在本机，回答时不要编造资料之外的内容。
+CHAT_SYSTEM = """你是用户的私人知识库助手。资料全部来自用户自己转写的音视频或导入的文档，只存在本机，回答时不要编造资料之外的内容。
 规则：
 1. 只根据【资料】回答用户问题。资料不足就直说知识库里没有足够依据，不要用常识编造。
 2. 必须使用简体中文。分段书写，关键结论、对象、数字、方法用**加粗**。
-3. 提到具体说法时标注来源，格式用〔标题 · mm:ss〕，时间必须来自资料里的时间，禁止自己编时钟。
+3. 提到具体说法时标注来源。音视频用〔标题 · mm:ss〕；文档用〔标题〕或〔标题 · 第N页/第N段〕，必须来自资料。
 """
 
 
@@ -131,17 +132,21 @@ def retrieve(jobs: list[Job], query: str, limit: int = MAX_CHAT_CHUNKS) -> list[
     ranked.sort(key=lambda item: item.score, reverse=True)
     hits: list[KnowledgeHit] = []
     for chunk in ranked[:limit]:
+        kind_label = KIND_LABELS.get(chunk.kind, chunk.kind)
+        if chunk.kind == "transcript" and chunk.locator:
+            kind_label = "正文"
         hits.append(
             KnowledgeHit(
                 job_id=chunk.job_id,
                 title=chunk.title,
                 kind=chunk.kind,
-                kind_label=KIND_LABELS.get(chunk.kind, chunk.kind),
+                kind_label=kind_label,
                 text=chunk.text,
                 snippet=_snippet(chunk.text, query, terms),
                 start=chunk.start,
                 end=chunk.end,
                 segment_id=chunk.segment_id,
+                locator=chunk.locator,
             )
         )
     return hits
@@ -169,7 +174,7 @@ def answer_from_knowledge(
     scoped = jobs_in_domain(jobs, domain_id)
     citations = retrieve(scoped, prior or question, limit=MAX_CHAT_CHUNKS)
     if not citations:
-        return "知识库里没有找到和这个问题相关的转写。可以换个问法，或先完成更多视频任务。", []
+        return "知识库里没有找到和这个问题相关的转写或文档。可以换个问法，或先完成更多任务。", []
     context = _format_context(citations)
     payload = [
         {
@@ -257,6 +262,7 @@ def _chunks_for_job(job: Job) -> list[_Chunk]:
                         text=body,
                         start=float(chapter.get("start") or 0),
                         end=float(chapter.get("end") or 0),
+                        locator=str(chapter.get("locator") or ""),
                     )
                 )
         for point in summary.get("key_points") or []:
@@ -270,6 +276,7 @@ def _chunks_for_job(job: Job) -> list[_Chunk]:
                         text=text,
                         start=float(point.get("start") or 0),
                         end=float(point.get("end") or 0),
+                        locator=str(point.get("locator") or ""),
                     )
                 )
     return chunks
@@ -285,6 +292,7 @@ def _window_chunk(job_id: str, title: str, window: list[dict]) -> _Chunk:
         start=float(window[0].get("start") or 0),
         end=float(window[-1].get("end") or 0),
         segment_id=window[0].get("id"),
+        locator=str(window[0].get("locator") or ""),
     )
 
 
@@ -345,13 +353,24 @@ def _format_context(hits: list[KnowledgeHit]) -> str:
     parts: list[str] = []
     used = 0
     for index, hit in enumerate(hits, start=1):
-        start = _clock(hit.start)
-        block = f"[{index}] {hit.title} · {hit.kind_label} · {start}\n{hit.text.strip()}"
+        start = _place(hit)
+        label = f"{hit.title} · {hit.kind_label}"
+        if start:
+            label = f"{label} · {start}"
+        block = f"[{index}] {label}\n{hit.text.strip()}"
         if used + len(block) > MAX_CONTEXT_CHARS:
             break
         parts.append(block)
         used += len(block)
     return "\n\n".join(parts)
+
+
+def _place(hit: KnowledgeHit) -> str:
+    if (hit.locator or "").strip():
+        return hit.locator.strip()
+    if hit.start or hit.end:
+        return _clock(hit.start)
+    return ""
 
 
 def _clock(seconds: float) -> str:

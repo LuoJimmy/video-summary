@@ -1,6 +1,8 @@
 export const STAGE_TIME_LABELS: Record<string, string> = {
-  resolving: "解析媒体",
+  resolving: "解析来源",
   extracting: "抽取音频",
+  extracting_text: "提取正文",
+  installing_plugin: "安装插件",
   transcribing: "转写",
   proofreading: "校对转写",
   summarizing: "总结",
@@ -87,6 +89,8 @@ export function statusLabel(status: string, stage: string): string {
     queued: "排队中",
     resolving: "解析媒体",
     extracting: "抽取音频",
+    extracting_text: "提取正文",
+    installing_plugin: "安装插件",
     transcribing: "转写中",
     proofreading: "校对转写",
     summarizing: "总结中",

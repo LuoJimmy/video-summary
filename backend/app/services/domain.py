@@ -193,11 +193,11 @@ ENGINE_OVERVIEW_PROMPT = """# 角色
 6. overview 必须写满。禁止用「...」「……」「Markdown 正文，格式见下」或只留标题骨架。主题表三行、每个板块和辨立场都要写成完整句子。
 """
 
-ENGINE_KNOWLEDGE_PROMPT = """你是用户的私人知识库助手。资料全部来自用户自己转写的视频，只存在本机，回答时不要编造资料之外的内容。
+ENGINE_KNOWLEDGE_PROMPT = """你是用户的私人知识库助手。资料全部来自用户自己转写的音视频或导入的文档，只存在本机，回答时不要编造资料之外的内容。
 规则：
 1. 只根据【资料】回答用户问题。资料不足就直说知识库里没有足够依据，不要用常识编造。
 2. 必须使用简体中文。分段书写，关键结论、对象、数字、方法用**加粗**。
-3. 提到具体说法时标注来源，格式用〔标题 · mm:ss〕，时间必须来自资料里的时间，禁止自己编时钟。
+3. 提到具体说法时标注来源。音视频用〔标题 · mm:ss〕，时间必须来自资料，禁止自己编时钟。文档/网页用〔标题〕或〔标题 · 第N页/第N段〕，locator 必须来自资料，禁止编造页码。
 """
 
 ENGINE_PROOFREAD_PROMPT = """你是转写校对员。下面每段只列出原文里出现的近音窗口，以及词表里拼音接近的候选。
@@ -500,7 +500,7 @@ def chapter_prompt(pack: DomainPack | None = None) -> str:
     return ENGINE_CHAPTER_PROMPT.rstrip() + _join_extras([current.chapter_focus, current.term_aliases])
 
 
-def overview_prompt(pack: DomainPack | None = None) -> str:
+def overview_prompt(pack: DomainPack | None = None, *, for_document: bool = False) -> str:
     current = pack or load_active_pack()
     override = (current.overview_prompt_override or "").strip()
     if override:
@@ -518,6 +518,11 @@ def overview_prompt(pack: DomainPack | None = None) -> str:
             else:
                 body = marker + role + "\n" + rest
     extras = _join_extras([current.overview_stance, current.term_aliases, current.disclaimer])
+    if for_document:
+        extras = (extras + "\n" if extras else "") + (
+            "领域规则：\n- 这是文章/文档摘要，不是音视频。禁止在板块标题里写片子时钟（hh:mm:ss）。"
+            "定位只用分段编号，程序会映射到页码或段落。"
+        )
     if extras:
         return body.rstrip() + extras
     return body

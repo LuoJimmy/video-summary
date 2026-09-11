@@ -98,6 +98,7 @@ class Job(Base):
     timing_json: Mapped[str] = mapped_column(Text, default="")
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     source_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    summarize_document: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

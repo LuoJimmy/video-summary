@@ -13,3 +13,6 @@ imageio-ffmpeg==0.6.0
 zhconv==1.4.3
 pypinyin==0.55.0
 huggingface_hub>=0.34.0
+pymupdf==1.26.4
+python-docx==1.1.2
+trafilatura==2.0.0

@@ -39,3 +39,5 @@ def migrate_job_columns() -> None:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN domain_id VARCHAR(32) DEFAULT ''"))
         if "author" not in names:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN author VARCHAR(120) DEFAULT ''"))
+        if "summarize_document" not in names:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN summarize_document BOOLEAN DEFAULT 0"))

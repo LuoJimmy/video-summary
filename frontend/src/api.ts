@@ -55,6 +55,7 @@ export type TranscriptSegment = {
   start: number;
   end: number;
   text: string;
+  locator?: string;
 };
 
 export type SummaryResult = {
@@ -66,6 +67,7 @@ export type SummaryResult = {
     end_segment: number;
     start: number;
     end: number;
+    locator?: string;
     bullets: string[];
   }>;
   key_points: Array<{
@@ -74,6 +76,7 @@ export type SummaryResult = {
     end_segment: number;
     start: number;
     end: number;
+    locator?: string;
   }>;
 };
 
@@ -97,6 +100,7 @@ export type Job = {
   timing: Record<string, number>;
   started_at: string | null;
   source_created_at: string | null;
+  summarize_document?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -137,6 +141,7 @@ export type KnowledgeHit = {
   start: number;
   end: number;
   segment_id: number | null;
+  locator?: string;
 };
 
 export type KnowledgeSearch = {
@@ -189,6 +194,16 @@ export type ScheduleLog = {
   status: string;
   summary: string;
   detail: ScheduleLogDetail[];
+};
+
+export type PluginInfo = {
+  id: string;
+  title: string;
+  description: string;
+  size_hint: string;
+  status: string;
+  error: string;
+  soffice: string;
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -306,12 +321,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  uploadJob: (file: File, title: string, domainId = "a-share", author = "") => {
+  uploadJob: (
+    file: File,
+    title: string,
+    domainId = "a-share",
+    author = "",
+    summarizeDocument = false
+  ) => {
     const body = new FormData();
     body.append("file", file);
     body.append("title", title);
     body.append("author", author);
     body.append("domain_id", domainId || "a-share");
+    body.append("summarize_document", summarizeDocument ? "true" : "false");
     if (file.lastModified)
       body.append("source_created_at", String(file.lastModified));
     return request<Job>("/api/jobs/upload", { method: "POST", body });
@@ -361,4 +383,9 @@ export const api = {
     request<ScheduleLog[]>(`/api/schedule/logs?limit=${limit}`),
   clearScheduleLogs: () =>
     request<{ ok: boolean }>("/api/schedule/logs", { method: "DELETE" }),
+  plugins: () => request<PluginInfo[]>("/api/plugins"),
+  installPlugin: (id: string) =>
+    request<PluginInfo>(`/api/plugins/${id}/install`, { method: "POST" }),
+  uninstallPlugin: (id: string) =>
+    request<PluginInfo>(`/api/plugins/${id}/uninstall`, { method: "POST" }),
 };

@@ -5,8 +5,9 @@
 ## 主要功能
 
 - 本地与在线视频、音频均可转写，并生成带时间轴的 AI 总结
-- 点击段落或关键句，即可跳回原片对应位置
-- 已处理内容可入库，基于转写做本机知识库问答
+- 也支持 PDF / Word / Markdown / 网页：默认直接入库原文，勾选后才做 AI 总结
+- 点击段落或关键句，即可跳回原片或文档对应位置
+- 已处理内容可入库，基于转写和文档做本机知识库问答
 
 ## 产品截图
 
@@ -19,6 +20,7 @@
 - Python 3.11+（推荐 3.12）
 - Node.js 18+
 - FFmpeg（抽音，未安装时任务会在抽音阶段失败并给出提示）
+- 扫描 PDF、旧版 `.doc` 为可选插件，装到 `DATA_DIR/plugins`（首次用到会联网下载；也可在设置页预装）。本机处理 `.doc` 也可自行安装 LibreOffice
 
 ## 启动
 
@@ -44,15 +46,15 @@ npm run dev
 
 1. 转写默认本机 SenseVoice Small Q8，也可改选 Whisper。进程启动后会后台预拉 SenseVoice。总结在「设置」填写 OpenAI 兼容接口。可按需打开自动 AI 校对。
 2. 在「站点与登录」把浏览器 Cookie 粘进对应登录档案。
-3. 在「任务」粘贴页面/媒体地址，或上传本地文件。
-4. 若站点页解析不出流地址，把 Network 里的 m3u8/mp4 填进「媒体地址覆盖」。
-5. 在任务详情点击总结时间轴，定位原片位置。
+3. 在「任务」粘贴页面/媒体/文档地址，或上传本地视频、音频、PDF、Word、Markdown。文档默认不走总结；需要时勾选「文档生成 AI 总结」。
+4. 若站点页解析不出流地址，把 Network 里的 m3u8/mp4 填进「媒体地址覆盖」。普通网页（非 B 站/小鹅通/约牛）会提取正文入库。
+5. 在任务详情点击总结时间轴，定位原片或文档段落。
 6. 在「设置 → 定时拉取」打开每天扫描：填写起始日期。小鹅通填店铺 app_id、B 站填 UP mid，多个用逗号或换行分隔；也可在「站点」页再添加一条同类型站点，分别命名。约牛用已有 Cookie 即可。已拉取过的地址会跳过。
-7. 在「知识库」用已配置的总结模型，基于本机转写对话生成答案。
+7. 在「知识库」用已配置的总结模型，基于本机转写和导入文档对话生成答案。扫描件 OCR、旧版 Word 可在「设置 → 文档插件」按需安装。
 
 ## Docker
 
-数据目录和下载目录都可改宿主机路径，容器内分别挂到 `/data` 与 `/downloads`。
+数据目录和下载目录都可改宿主机路径，容器内分别挂到 `/data` 与 `/downloads`。默认镜像只含 FFmpeg，不含 OCR / LibreOffice；扫描件和旧版 `.doc` 插件会装进 `DATA_DIR/plugins`，容器重建后仍在。
 
 ```bash
 # 默认：./data 存库和模型，./downloads 存抽音/上传文件
@@ -93,7 +95,7 @@ docker run --rm -p 8765:8765 \
 
 也可使用 `ghcr.io/luojimmy/video-summary:latest`。私有仓库拉取前先 `docker login ghcr.io`。
 
-环境变量：`DATA_DIR`（数据库、Whisper 模型、Hugging Face 缓存），`DOWNLOAD_DIR`（任务音频和上传文件），`VIDEO_SUMMARY_DATA` / `VIDEO_SUMMARY_DOWNLOADS`（compose 宿主机路径），`PORT`，`PREFETCH_SENSEVOICE`（默认开启；设为 `0` 可关闭启动时后台预拉 SenseVoice）。
+环境变量：`DATA_DIR`（数据库、Whisper 模型、Hugging Face 缓存、文档插件），`DOWNLOAD_DIR`（任务音频和上传文件），`VIDEO_SUMMARY_DATA` / `VIDEO_SUMMARY_DOWNLOADS`（compose 宿主机路径），`PORT`，`PREFETCH_SENSEVOICE`（默认开启；设为 `0` 可关闭启动时后台预拉 SenseVoice）。
 
 ### 离线镜像包（极空间等）
 
