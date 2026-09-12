@@ -477,6 +477,90 @@ def test_knowledge_paginates_documents(client, db_session):
     assert generic["documents"][0]["title"] == "通用课"
 
 
+def test_knowledge_chat_history_search_and_delete(client, db_session, monkeypatch):
+    from app.services.jsonutil import dumps
+
+    db_session.add(
+        Job(
+            title="行情课",
+            status="done",
+            transcript_json=dumps([{"id": 0, "start": 0, "end": 8, "text": "今天重点看贵州茅台"}]),
+        )
+    )
+    db_session.commit()
+    monkeypatch.setattr(
+        "app.routers.knowledge.answer_from_knowledge",
+        lambda *_args, **_kwargs: ("茅台量能放大可以低吸。", []),
+    )
+
+    empty = client.get("/api/knowledge/conversations").json()
+    assert empty["total"] == 0
+    assert empty["items"] == []
+
+    asked = client.post(
+        "/api/knowledge/chat",
+        json={"messages": [{"role": "user", "content": "茅台怎么看"}], "domain_id": "a-share"},
+    ).json()
+    assert asked["answer"].startswith("茅台")
+    conversation_id = asked["conversation_id"]
+    assert conversation_id
+    assert asked["title"] == "茅台怎么看"
+
+    listed = client.get("/api/knowledge/conversations").json()
+    assert listed["total"] == 1
+    assert listed["items"][0]["id"] == conversation_id
+    assert listed["items"][0]["title"] == "茅台怎么看"
+
+    found = client.get("/api/knowledge/conversations", params={"q": "低吸"}).json()
+    assert found["total"] == 1
+    miss = client.get("/api/knowledge/conversations", params={"q": "不存在的词"}).json()
+    assert miss["total"] == 0
+    escaped = client.get("/api/knowledge/conversations", params={"q": "%"}).json()
+    assert escaped["total"] == 0
+
+    generic = client.get("/api/knowledge/conversations", params={"domain_id": "generic"}).json()
+    assert generic["total"] == 0
+
+    detail = client.get(f"/api/knowledge/conversations/{conversation_id}").json()
+    assert [item["role"] for item in detail["messages"]] == ["user", "assistant"]
+    assert detail["messages"][0]["content"] == "茅台怎么看"
+
+    continued = client.post(
+        "/api/knowledge/chat",
+        json={
+            "conversation_id": conversation_id,
+            "domain_id": "a-share",
+            "messages": [
+                {"role": "user", "content": "茅台怎么看"},
+                {"role": "assistant", "content": asked["answer"]},
+                {"role": "user", "content": "还有什么注意"},
+            ],
+        },
+    ).json()
+    assert continued["conversation_id"] == conversation_id
+    assert continued["title"] == "茅台怎么看"
+
+    renamed = client.patch(
+        f"/api/knowledge/conversations/{conversation_id}",
+        json={"title": "茅台复盘"},
+    ).json()
+    assert renamed["title"] == "茅台复盘"
+    assert client.get("/api/knowledge/conversations").json()["items"][0]["title"] == "茅台复盘"
+    blank = client.patch(f"/api/knowledge/conversations/{conversation_id}", json={"title": "   "})
+    assert blank.status_code == 400
+    missing_rename = client.patch("/api/knowledge/conversations/does-not-exist", json={"title": "x"})
+    assert missing_rename.status_code == 404
+
+    missing = client.get("/api/knowledge/conversations/does-not-exist")
+    assert missing.status_code == 404
+    missing_delete = client.delete("/api/knowledge/conversations/does-not-exist")
+    assert missing_delete.status_code == 404
+
+    deleted = client.delete(f"/api/knowledge/conversations/{conversation_id}").json()
+    assert deleted["ok"] is True
+    assert client.get("/api/knowledge/conversations").json()["total"] == 0
+
+
 def test_delete_job(client, db_session, tmp_path, monkeypatch):
     from app.config import settings as app_settings
 

@@ -103,5 +103,16 @@ class Job(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class KnowledgeConversation(Base):
+    __tablename__ = "knowledge_conversations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    domain_id: Mapped[str] = mapped_column(String(32), default="")
+    title: Mapped[str] = mapped_column(String(255), default="")
+    messages_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 def stamp_job_start(job: Job) -> None:
     job.started_at = utcnow()

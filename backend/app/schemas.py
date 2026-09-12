@@ -229,16 +229,45 @@ class KnowledgeSearchOut(BaseModel):
 class KnowledgeChatMessage(BaseModel):
     role: str
     content: str
+    citations: list[KnowledgeHit] = Field(default_factory=list)
 
 
 class KnowledgeChatIn(BaseModel):
     messages: list[KnowledgeChatMessage] = Field(default_factory=list)
     domain_id: str = "a-share"
+    conversation_id: str = ""
 
 
 class KnowledgeChatOut(BaseModel):
     answer: str
     citations: list[KnowledgeHit] = Field(default_factory=list)
+    conversation_id: str = ""
+    title: str = ""
+
+
+class KnowledgeConversationSummary(BaseModel):
+    id: str
+    domain_id: str
+    title: str
+    preview: str = ""
+    updated_at: datetime
+    created_at: datetime
+    message_count: int = 0
+
+
+class KnowledgeConversationOut(KnowledgeConversationSummary):
+    messages: list[KnowledgeChatMessage] = Field(default_factory=list)
+
+
+class KnowledgeConversationListOut(BaseModel):
+    items: list[KnowledgeConversationSummary] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 30
+
+
+class KnowledgeConversationRenameIn(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
 
 
 class PluginOut(BaseModel):

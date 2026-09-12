@@ -1,7 +1,7 @@
 import { createApp, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type KnowledgeDoc } from "../api";
+import { api, type KnowledgeConversationSummary, type KnowledgeDoc } from "../api";
 import KnowledgeView from "./KnowledgeView.vue";
 
 vi.mock("../api", () => ({
@@ -9,6 +9,10 @@ vi.mock("../api", () => ({
     settings: vi.fn(),
     knowledge: vi.fn(),
     knowledgeChat: vi.fn(),
+    knowledgeConversations: vi.fn(),
+    knowledgeConversation: vi.fn(),
+    renameKnowledgeConversation: vi.fn(),
+    deleteKnowledgeConversation: vi.fn(),
   },
 }));
 
@@ -25,6 +29,21 @@ function makeDoc(overrides: Partial<KnowledgeDoc> = {}): KnowledgeDoc {
   };
 }
 
+function makeConversation(
+  overrides: Partial<KnowledgeConversationSummary> = {}
+): KnowledgeConversationSummary {
+  return {
+    id: "conv-1",
+    domain_id: "a-share",
+    title: "茅台怎么看",
+    preview: "量能放大可以低吸",
+    updated_at: "2026-09-11T02:00:00Z",
+    created_at: "2026-09-11T02:00:00Z",
+    message_count: 2,
+    ...overrides,
+  };
+}
+
 let root: HTMLElement | undefined;
 let app: ReturnType<typeof createApp> | undefined;
 
@@ -35,7 +54,8 @@ async function flush() {
 
 async function mountKnowledge(
   documents: KnowledgeDoc[] = [makeDoc()],
-  total = documents.length
+  total = documents.length,
+  conversations: KnowledgeConversationSummary[] = []
 ) {
   vi.mocked(api.settings).mockResolvedValue({
     transcribe_base_url: "",
@@ -64,6 +84,12 @@ async function mountKnowledge(
     hits: [],
     page: 1,
     page_size: 10,
+  });
+  vi.mocked(api.knowledgeConversations).mockResolvedValue({
+    items: conversations,
+    total: conversations.length,
+    page: 1,
+    page_size: 30,
   });
   const router = createRouter({
     history: createMemoryHistory(),
@@ -100,6 +126,11 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(api.settings).mockReset();
   vi.mocked(api.knowledge).mockReset();
+  vi.mocked(api.knowledgeChat).mockReset();
+  vi.mocked(api.knowledgeConversations).mockReset();
+  vi.mocked(api.knowledgeConversation).mockReset();
+  vi.mocked(api.renameKnowledgeConversation).mockReset();
+  vi.mocked(api.deleteKnowledgeConversation).mockReset();
 });
 
 describe("知识库任务列表分页", () => {
@@ -144,6 +175,8 @@ describe("知识库任务列表分页", () => {
     const el = await mountKnowledge();
     vi.mocked(api.knowledgeChat).mockResolvedValue({
       answer: "利率下行对估值有支撑",
+      conversation_id: "conv-1",
+      title: "利率",
       citations: [
         {
           job_id: "job-1",
@@ -179,5 +212,170 @@ describe("知识库任务列表分页", () => {
       item.textContent?.includes("行情课")
     );
     expect(link?.getAttribute("href")).toBe("/jobs/job-1?from=knowledge");
+  });
+});
+
+describe("知识库问答历史", () => {
+  it("列出历史并打开后恢复对话", async () => {
+    const conv = makeConversation();
+    const el = await mountKnowledge([makeDoc()], 1, [conv]);
+    expect(api.knowledgeConversations).toHaveBeenCalledWith(
+      "",
+      "a-share",
+      1,
+      30
+    );
+    expect(el.textContent).toContain("茅台怎么看");
+    expect(el.querySelector(".kb-history-item")?.textContent).not.toContain(
+      "2026-09-11"
+    );
+    vi.mocked(api.knowledgeConversation).mockResolvedValue({
+      ...conv,
+      messages: [
+        { role: "user", content: "茅台怎么看" },
+        { role: "assistant", content: "量能放大可以低吸", citations: [] },
+      ],
+    });
+    (el.querySelector(".kb-history-open") as HTMLButtonElement).click();
+    await flush();
+    expect(api.knowledgeConversation).toHaveBeenCalledWith("conv-1");
+    expect(el.textContent).toContain("量能放大可以低吸");
+    expect(el.querySelector(".kb-history-item")?.classList.contains("active")).toBe(
+      true
+    );
+  });
+
+  it("按关键词搜索历史记录", async () => {
+    const el = await mountKnowledge();
+    vi.mocked(api.knowledgeConversations).mockClear();
+    const search = el.querySelector(
+      'input[aria-label="搜索历史记录"]'
+    ) as HTMLInputElement;
+    search.value = "茅台";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await flush();
+    expect(api.knowledgeConversations).toHaveBeenCalledWith(
+      "茅台",
+      "a-share",
+      1,
+      30
+    );
+  });
+
+  it("删除历史记录并在删除当前对话后回到空白", async () => {
+    const conv = makeConversation();
+    const el = await mountKnowledge([makeDoc()], 1, [conv]);
+    vi.mocked(api.knowledgeConversation).mockResolvedValue({
+      ...conv,
+      messages: [
+        { role: "user", content: "茅台怎么看" },
+        { role: "assistant", content: "量能放大可以低吸", citations: [] },
+      ],
+    });
+    (el.querySelector(".kb-history-open") as HTMLButtonElement).click();
+    await flush();
+    (el.querySelector('[aria-label="更多操作"]') as HTMLButtonElement).click();
+    await flush();
+    const remove = [...el.querySelectorAll("button")].find(
+      (item) => item.textContent?.trim() === "删除"
+    );
+    remove?.click();
+    await flush();
+    expect(document.body.textContent).toContain("确认删除");
+    vi.mocked(api.deleteKnowledgeConversation).mockResolvedValue({ ok: true });
+    vi.mocked(api.knowledgeConversations).mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 30,
+    });
+    const confirm = [...document.body.querySelectorAll("button")].find(
+      (item) => item.textContent === "确认删除"
+    );
+    confirm?.click();
+    await flush();
+    expect(api.deleteKnowledgeConversation).toHaveBeenCalledWith("conv-1");
+    expect(el.textContent).not.toContain("量能放大可以低吸");
+    expect(el.textContent).toContain("还没有问答记录");
+  });
+
+  it("新对话会清空当前线程但保留历史列表", async () => {
+    const conv = makeConversation();
+    const el = await mountKnowledge([makeDoc()], 1, [conv]);
+    vi.mocked(api.knowledgeConversation).mockResolvedValue({
+      ...conv,
+      messages: [
+        { role: "user", content: "茅台怎么看" },
+        { role: "assistant", content: "量能放大可以低吸", citations: [] },
+      ],
+    });
+    (el.querySelector(".kb-history-open") as HTMLButtonElement).click();
+    await flush();
+    const newChat = el.querySelector(
+      'button[aria-label="新对话"]'
+    ) as HTMLButtonElement;
+    newChat.click();
+    await flush();
+    expect(el.textContent).not.toContain("量能放大可以低吸");
+    expect(el.textContent).toContain("茅台怎么看");
+  });
+
+  it("可以收起和展开历史面板", async () => {
+    const conv = makeConversation();
+    const el = await mountKnowledge([makeDoc()], 1, [conv]);
+    expect(el.textContent).toContain("茅台怎么看");
+    (
+      el.querySelector('button[aria-label="收起历史"]') as HTMLButtonElement
+    ).click();
+    await flush();
+    expect(
+      el.querySelector(".kb-chat-layout")?.classList.contains("is-collapsed")
+    ).toBe(true);
+    expect(
+      (el.querySelector(".kb-history-list") as HTMLElement).style.display
+    ).toBe("none");
+    (
+      el.querySelector('button[aria-label="展开历史"]') as HTMLButtonElement
+    ).click();
+    await flush();
+    expect(
+      el.querySelector(".kb-chat-layout")?.classList.contains("is-collapsed")
+    ).toBe(false);
+    expect(el.textContent).toContain("茅台怎么看");
+  });
+
+  it("可以从更多菜单重命名历史记录", async () => {
+    const conv = makeConversation();
+    const el = await mountKnowledge([makeDoc()], 1, [conv]);
+    (el.querySelector('[aria-label="更多操作"]') as HTMLButtonElement).click();
+    await flush();
+    const rename = [...el.querySelectorAll("button")].find(
+      (item) => item.textContent?.trim() === "重命名"
+    );
+    rename?.click();
+    await flush();
+    expect(document.body.textContent).toContain("重命名对话");
+    const titleInput = document.body.querySelector(
+      'input[aria-label="对话标题"]'
+    ) as HTMLInputElement;
+    titleInput.value = "茅台复盘";
+    titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    vi.mocked(api.renameKnowledgeConversation).mockResolvedValue({
+      ...conv,
+      title: "茅台复盘",
+      messages: [],
+    });
+    const save = [...document.body.querySelectorAll("button")].find(
+      (item) => item.textContent === "保存"
+    );
+    save?.click();
+    await flush();
+    expect(api.renameKnowledgeConversation).toHaveBeenCalledWith(
+      "conv-1",
+      "茅台复盘"
+    );
+    expect(el.textContent).toContain("茅台复盘");
   });
 });

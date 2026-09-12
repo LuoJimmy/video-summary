@@ -157,6 +157,33 @@ export type KnowledgeSearch = {
 export type KnowledgeChatOut = {
   answer: string;
   citations: KnowledgeHit[];
+  conversation_id: string;
+  title: string;
+};
+
+export type KnowledgeConversationSummary = {
+  id: string;
+  domain_id: string;
+  title: string;
+  preview: string;
+  updated_at: string;
+  created_at: string;
+  message_count: number;
+};
+
+export type KnowledgeConversation = KnowledgeConversationSummary & {
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string;
+    citations?: KnowledgeHit[];
+  }>;
+};
+
+export type KnowledgeConversationList = {
+  items: KnowledgeConversationSummary[];
+  total: number;
+  page: number;
+  page_size: number;
 };
 
 export type ScheduleSite = {
@@ -364,12 +391,48 @@ export const api = {
     return request<KnowledgeSearch>(`/api/knowledge?${params}`);
   },
   knowledgeChat: (
-    messages: Array<{ role: string; content: string }>,
-    domainId = "a-share"
+    messages: Array<{
+      role: string;
+      content: string;
+      citations?: KnowledgeHit[];
+    }>,
+    domainId = "a-share",
+    conversationId = ""
   ) =>
     request<KnowledgeChatOut>("/api/knowledge/chat", {
       method: "POST",
-      body: JSON.stringify({ messages, domain_id: domainId }),
+      body: JSON.stringify({
+        messages,
+        domain_id: domainId,
+        conversation_id: conversationId,
+      }),
+    }),
+  knowledgeConversations: (
+    q = "",
+    domainId = "a-share",
+    page = 1,
+    pageSize = 30
+  ) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+      domain_id: domainId,
+    });
+    if (q) params.set("q", q);
+    return request<KnowledgeConversationList>(
+      `/api/knowledge/conversations?${params}`
+    );
+  },
+    knowledgeConversation: (id: string) =>
+    request<KnowledgeConversation>(`/api/knowledge/conversations/${id}`),
+  renameKnowledgeConversation: (id: string, title: string) =>
+    request<KnowledgeConversation>(`/api/knowledge/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  deleteKnowledgeConversation: (id: string) =>
+    request<{ ok: boolean }>(`/api/knowledge/conversations/${id}`, {
+      method: "DELETE",
     }),
   schedule: () => request<ScheduleConfig>("/api/schedule"),
   saveSchedule: (payload: ScheduleConfig) =>
