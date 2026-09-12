@@ -147,7 +147,45 @@ afterEach(() => {
   vi.mocked(toast.error).mockClear();
 });
 
+function clickSettingsTab(el: HTMLElement, label: string) {
+  const tab = [...el.querySelectorAll('[role="tab"]')].find((item) =>
+    item.textContent?.includes(label)
+  ) as HTMLButtonElement | undefined;
+  expect(tab).toBeTruthy();
+  tab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}
+
 describe("设置页模型限制说明", () => {
+  it("用 tab 切换各设置区块", async () => {
+    const el = await mountSettings(localSettings);
+    const tabs = [...el.querySelectorAll('[role="tab"]')].map(
+      (item) => item.textContent?.trim() || ""
+    );
+    expect(tabs).toEqual([
+      "转写与总结",
+      "内容领域",
+      "定时任务",
+      "插件",
+      "外观",
+      "关于",
+    ]);
+    const appearance = el.querySelector(
+      "#settings-panel-appearance"
+    ) as HTMLElement;
+    const models = el.querySelector("#settings-panel-models") as HTMLElement;
+    expect(models.style.display).not.toBe("none");
+    expect(appearance.style.display).toBe("none");
+    clickSettingsTab(el, "外观");
+    await flush();
+    expect(models.style.display).toBe("none");
+    expect(appearance.style.display).not.toBe("none");
+    expect(
+      el
+        .querySelector("#settings-tab-appearance")
+        ?.getAttribute("aria-selected")
+    ).toBe("true");
+  });
+
   it("本地转写时展示协议限制和本机说明", async () => {
     const el = await mountSettings(localSettings);
     expect(el.textContent).toContain("内容领域");
@@ -231,7 +269,7 @@ describe("设置页模型限制说明", () => {
     expect(changelog?.textContent).toContain("查看本版本更新");
   });
 
-  it("展示定时拉取站点与日志区", async () => {
+  it("展示定时任务站点与日志区", async () => {
     const el = await mountSettings(localSettings, [
       {
         id: "log-1",
@@ -243,7 +281,7 @@ describe("设置页模型限制说明", () => {
         detail: [],
       },
     ]);
-    expect(el.textContent).toContain("定时拉取");
+    expect(el.textContent).toContain("定时任务");
     expect(el.textContent).toContain("小鹅通");
     expect(el.textContent).toContain("从哪天开始");
     expect(el.textContent).toContain("立即执行");
@@ -279,15 +317,17 @@ describe("设置页模型限制说明", () => {
   });
 
   it("立即执行时立刻展示扫描中，完成后写入日志", async () => {
-    let finishRun: ((value: {
-      id: string;
-      started_at: string;
-      finished_at: string | null;
-      trigger: string;
-      status: string;
-      summary: string;
-      detail: unknown[];
-    }) => void) | undefined;
+    let finishRun:
+      | ((value: {
+          id: string;
+          started_at: string;
+          finished_at: string | null;
+          trigger: string;
+          status: string;
+          summary: string;
+          detail: unknown[];
+        }) => void)
+      | undefined;
     vi.mocked(api.runSchedule).mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -324,11 +364,13 @@ describe("设置页模型限制说明", () => {
   });
 });
 
-describe("文档插件", () => {
+describe("插件", () => {
   it("展示插件卡片和未安装状态", async () => {
     const el = await mountSettings(localSettings);
-    expect(el.textContent).toContain("文档插件");
+    expect(el.textContent).toContain("插件");
     expect(el.textContent).toContain("扫描件 OCR");
     expect(el.textContent).toContain("未安装");
+    expect(el.querySelector(".plugin-grid")).toBeTruthy();
+    expect(el.querySelector(".plugin-card")).toBeTruthy();
   });
 });

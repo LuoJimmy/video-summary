@@ -92,6 +92,17 @@ const askingClearLogs = ref(false);
 const clearingLogs = ref(false);
 const plugins = ref<PluginInfo[]>([]);
 const pluginBusyId = ref("");
+type SettingsTab =
+  "appearance" | "models" | "domain" | "schedule" | "plugins" | "about";
+const settingsTabs: { id: SettingsTab; label: string }[] = [
+  { id: "models", label: "转写与总结" },
+  { id: "domain", label: "内容领域" },
+  { id: "schedule", label: "定时任务" },
+  { id: "plugins", label: "插件" },
+  { id: "appearance", label: "外观" },
+  { id: "about", label: "关于" },
+];
+const settingsTab = ref<SettingsTab>("models");
 let pluginTimer: number | undefined;
 const maxJobOptions = Array.from({ length: 20 }, (_, index) =>
   String(index + 1)
@@ -287,7 +298,7 @@ async function loadSchedule() {
     schedule.value = next;
     scheduleLogs.value = logs;
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "无法加载定时拉取设置");
+    toast.error(err instanceof Error ? err.message : "无法加载定时任务设置");
   }
 }
 
@@ -316,7 +327,7 @@ async function loadPlugins() {
     plugins.value = await api.plugins();
     syncPluginPoll(plugins.value);
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "无法加载文档插件");
+    toast.error(err instanceof Error ? err.message : "无法加载插件");
   }
 }
 
@@ -352,11 +363,11 @@ async function saveSchedule() {
     schedule.value = await api.saveSchedule(schedule.value);
     toast.success(
       schedule.value.enabled
-        ? "定时拉取已保存。到点会扫描已启用站点，跳过已有任务。"
-        : "已保存。未开启每天定时，启动和后台都不会自动扫描。",
+        ? "定时任务已保存。到点会扫描已启用站点，跳过已有任务。"
+        : "已保存。未开启每天定时，启动和后台都不会自动扫描。"
     );
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "保存定时拉取失败");
+    toast.error(err instanceof Error ? err.message : "保存定时任务失败");
   } finally {
     savingSchedule.value = false;
   }
@@ -401,11 +412,11 @@ async function runScheduleNow() {
       return;
     }
     if (log.status === "failed") {
-      toast.error(log.summary || "定时拉取失败");
+      toast.error(log.summary || "定时任务失败");
     } else if (log.status === "partial") {
       toast.error(log.summary || "部分站点未拉完");
     } else {
-      toast.success(log.summary || "已执行一轮定时拉取");
+      toast.success(log.summary || "已执行一轮定时任务");
     }
   } catch (err) {
     scheduleLogs.value = scheduleLogs.value.filter(
@@ -652,36 +663,33 @@ const highlightPhrasesText = computed({
     <h1>设置</h1>
     <p class="sub">
       转写默认本机 SenseVoice。总结推荐 DeepSeek V4
-      Flash。自定义接口的协议不一样，请看下面的限制。
+      Flash。自定义接口的协议限制在「转写与总结」。
     </p>
 
-    <section class="card">
-      <h3>外观</h3>
-      <p class="msg mb-3">主题保存在本机浏览器，切换后立即生效。</p>
-      <div class="theme-grid">
-        <Button
-          v-for="item in THEMES"
-          :key="item.id"
-          variant="outline"
-          class="theme-card"
-          :class="{ on: themeId === item.id }"
-          type="button"
-          @click="pickTheme(item.id)"
-        >
-          <span class="theme-preview">
-            <span
-              v-for="(color, index) in item.swatches"
-              :key="index"
-              :style="{ background: color }"
-            />
-          </span>
-          <strong>{{ item.name }}</strong>
-          <small>{{ item.desc }}</small>
-        </Button>
-      </div>
-    </section>
+    <div class="settings-tablist" role="tablist" aria-label="设置分组">
+      <button
+        v-for="item in settingsTabs"
+        :id="`settings-tab-${item.id}`"
+        :key="item.id"
+        type="button"
+        role="tab"
+        class="settings-tab"
+        :aria-selected="settingsTab === item.id"
+        :aria-controls="`settings-panel-${item.id}`"
+        :tabindex="settingsTab === item.id ? 0 : -1"
+        @click="settingsTab = item.id"
+      >
+        {{ item.label }}
+      </button>
+    </div>
 
-    <section class="card">
+    <section
+      v-show="settingsTab === 'models'"
+      id="settings-panel-models"
+      class="card settings-panel"
+      role="tabpanel"
+      aria-labelledby="settings-tab-models"
+    >
       <div class="model-block">
         <h3>转写</h3>
         <blockquote class="note">
@@ -861,7 +869,13 @@ const highlightPhrasesText = computed({
       </div>
     </section>
 
-    <section class="card">
+    <section
+      v-show="settingsTab === 'domain'"
+      id="settings-panel-domain"
+      class="card settings-panel"
+      role="tabpanel"
+      aria-labelledby="settings-tab-domain"
+    >
       <h3>内容领域</h3>
       <p class="msg mb-3">
         决定转写提示、总结口径、知识库人设、综述高亮和转写词汇表。默认是 A
@@ -1127,17 +1141,23 @@ const highlightPhrasesText = computed({
       </template>
     </section>
 
-    <section class="card">
-      <h3>定时拉取</h3>
+    <section
+      v-show="settingsTab === 'schedule'"
+      id="settings-panel-schedule"
+      class="card settings-panel"
+      role="tabpanel"
+      aria-labelledby="settings-tab-schedule"
+    >
+      <h3>定时任务</h3>
       <p class="msg mb-3">
-        只有打开「启用每天定时拉取」并保存后，到点才会自动扫描；未开启时启动和后台都不会跑。已有相同地址的任务会跳过，失败过的也不会反复重试。通用直链不参与。Cookie
+        只有打开「启用每天定时任务」并保存后，到点才会自动扫描；未开启时启动和后台都不会跑。已有相同地址的任务会跳过，失败过的也不会反复重试。通用直链不参与。Cookie
         仍在「站点」页配置。B 站多个
         UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
         app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。需要立刻扫一轮时用「立即执行」。
       </p>
       <label class="check !mb-3">
         <Checkbox v-model="schedule.enabled" />
-        <span>启用每天定时拉取</span>
+        <span>启用每天定时任务</span>
       </label>
       <div class="grid two">
         <div class="field">
@@ -1185,7 +1205,10 @@ const highlightPhrasesText = computed({
       </div>
       <p v-else class="msg mt-3">暂无可定时的站点。</p>
       <div class="row mt-3.5">
-        <Button type="button" :disabled="savingSchedule || runningSchedule" @click="saveSchedule"
+        <Button
+          type="button"
+          :disabled="savingSchedule || runningSchedule"
+          @click="saveSchedule"
           >保存定时</Button
         >
         <Button
@@ -1232,20 +1255,22 @@ const highlightPhrasesText = computed({
       </div>
     </section>
 
-    <section class="card">
-      <h3>文档插件</h3>
+    <section
+      v-show="settingsTab === 'plugins'"
+      id="settings-panel-plugins"
+      class="card settings-panel"
+      role="tabpanel"
+      aria-labelledby="settings-tab-plugins"
+    >
+      <h3>插件</h3>
       <p class="msg mb-3">
-        扫描 OCR 和旧版 Word 按需装到数据目录，不打进默认镜像。首次用到扫描 PDF 或
-        .doc 时也会自动安装。
+        扫描 OCR 和旧版 Word 按需装到数据目录，不打进默认镜像。首次用到扫描 PDF
+        或 .doc 时也会自动安装。
       </p>
       <div v-if="!plugins.length" class="msg">正在读取插件状态…</div>
-      <div
-        v-for="item in plugins"
-        :key="item.id"
-        class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
-      >
-        <div class="min-w-0">
-          <div class="mb-1 flex flex-wrap items-center gap-2">
+      <div v-else class="plugin-grid">
+        <article v-for="item in plugins" :key="item.id" class="plugin-card">
+          <div class="plugin-card-head">
             <strong>{{ item.title }}</strong>
             <Badge
               variant="outline"
@@ -1260,26 +1285,66 @@ const highlightPhrasesText = computed({
           <p class="msg">{{ item.description }}</p>
           <p class="msg">{{ item.size_hint }}</p>
           <p v-if="item.error" class="error">{{ item.error }}</p>
-        </div>
-        <div class="row shrink-0">
-          <Button
-            type="button"
-            :disabled="pluginBusyId === item.id || item.status === 'installing'"
-            @click="installDocPlugin(item.id)"
-            >{{ item.status === "ready" ? "重新安装" : "安装" }}</Button
-          >
-          <Button
-            variant="outline"
-            type="button"
-            :disabled="pluginBusyId === item.id || item.status === 'missing'"
-            @click="uninstallDocPlugin(item.id)"
-            >卸载</Button
-          >
-        </div>
+          <div class="row plugin-card-actions">
+            <Button
+              type="button"
+              :disabled="
+                pluginBusyId === item.id || item.status === 'installing'
+              "
+              @click="installDocPlugin(item.id)"
+              >{{ item.status === "ready" ? "重新安装" : "安装" }}</Button
+            >
+            <Button
+              variant="outline"
+              type="button"
+              :disabled="pluginBusyId === item.id || item.status === 'missing'"
+              @click="uninstallDocPlugin(item.id)"
+              >卸载</Button
+            >
+          </div>
+        </article>
       </div>
     </section>
 
-    <section class="card">
+    <section
+      v-show="settingsTab === 'appearance'"
+      id="settings-panel-appearance"
+      class="card settings-panel"
+      role="tabpanel"
+      aria-labelledby="settings-tab-appearance"
+    >
+      <h3>外观</h3>
+      <p class="msg mb-3">主题保存在本机浏览器，切换后立即生效。</p>
+      <div class="theme-grid">
+        <Button
+          v-for="item in THEMES"
+          :key="item.id"
+          variant="outline"
+          class="theme-card"
+          :class="{ on: themeId === item.id }"
+          type="button"
+          @click="pickTheme(item.id)"
+        >
+          <span class="theme-preview">
+            <span
+              v-for="(color, index) in item.swatches"
+              :key="index"
+              :style="{ background: color }"
+            />
+          </span>
+          <strong>{{ item.name }}</strong>
+          <small>{{ item.desc }}</small>
+        </Button>
+      </div>
+    </section>
+
+    <section
+      v-show="settingsTab === 'about'"
+      id="settings-panel-about"
+      class="card settings-panel"
+      role="tabpanel"
+      aria-labelledby="settings-tab-about"
+    >
       <h3>关于</h3>
       <div class="about-list">
         <div class="field">

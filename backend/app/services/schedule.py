@@ -175,7 +175,7 @@ def save_schedule(db: Session, payload: ScheduleIn) -> ScheduleOut:
     for item in payload.sites:
         site = known.get(item.site_id)
         if site is None:
-            raise ValueError("只能为小鹅通、约牛或 B 站配置定时拉取")
+            raise ValueError("只能为小鹅通、约牛或 B 站配置定时任务")
         catalog_id = (item.catalog_id or "").strip()
         ids = split_catalog_ids(catalog_id)
         if item.enabled and site.adapter in {"xiaoe", "bilibili"} and not ids:
@@ -280,14 +280,14 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
         with _run_lock:
             cfg = load_schedule(db)
             if trigger != "manual" and not cfg.enabled:
-                raise ValueError("定时拉取未启用")
+                raise ValueError("定时任务未启用")
             if trigger != "manual" and not missed_scheduled_run(db):
                 hour, minute = parse_hhmm(cfg.time)
                 local = datetime.now().astimezone()
                 scheduled_today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 if local < scheduled_today:
                     raise ValueError("未到今天的定时时间")
-                raise ValueError("今日已执行过定时拉取")
+                raise ValueError("今日已执行过定时任务")
             since = parse_since_date(cfg.since) if cfg.since else None
             remaining = cfg.max_jobs
             domain_id = job_domain_id(cfg.domain_id)

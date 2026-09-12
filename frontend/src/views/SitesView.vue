@@ -347,7 +347,7 @@ onMounted(refresh);
         <DialogDescription>
           确定删除站点「{{
             current?.name || "当前站点"
-          }}」？已有任务仍保留记录。定时拉取里对应的内容源也会去掉。
+          }}」？已有任务仍保留记录。定时任务里对应的内容源也会去掉。
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>
