@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ChevronLeft, ChevronRight, EllipsisVertical, Pencil, Plus, Trash2 } from "@lucide/vue";
+import { EllipsisVertical, PanelLeft, Pencil, Plus, Trash2 } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,6 +59,7 @@ const historyTotal = ref(0);
 const historyPage = ref(1);
 const historyLoading = ref(false);
 const historyOpen = ref(true);
+const conversationTitle = ref("");
 const historyMenuId = ref("");
 const deleting = ref<KnowledgeConversationSummary | null>(null);
 const deletingBusy = ref(false);
@@ -73,6 +74,18 @@ const totalPages = computed(() =>
 const historyHasMore = computed(
   () => historyItems.value.length < historyTotal.value
 );
+const canStartNewChat = computed(() =>
+  Boolean(conversationId.value || messages.value.length)
+);
+const chatTitle = computed(() => {
+  if (conversationId.value) {
+    const item = historyItems.value.find(
+      (row) => row.id === conversationId.value
+    );
+    return item?.title || conversationTitle.value || "未命名对话";
+  }
+  return "新对话";
+});
 
 function applyExampleQuestions(pack?: DomainPack | null) {
   const questions = pack?.example_questions?.filter(Boolean);
@@ -145,6 +158,7 @@ function goPage(next: number) {
 
 function startNewChat() {
   conversationId.value = "";
+  conversationTitle.value = "";
   messages.value = [];
 }
 
@@ -172,6 +186,7 @@ async function openConversation(id: string) {
   try {
     const detail = await api.knowledgeConversation(id);
     conversationId.value = detail.id;
+    conversationTitle.value = detail.title;
     messages.value = detail.messages.map((item) => ({
       role: item.role,
       content: item.content,
@@ -283,6 +298,7 @@ async function send() {
       conversationId.value
     );
     conversationId.value = result.conversation_id;
+    conversationTitle.value = result.title;
     messages.value.push({
       role: "assistant",
       content: result.answer,
@@ -375,28 +391,17 @@ function loadMoreHistory() {
   </section>
 
   <div class="kb-chat-layout" :class="{ 'is-collapsed': !historyOpen }">
-    <section class="card kb-history" :class="{ collapsed: !historyOpen }">
+    <section v-show="historyOpen" class="card kb-history">
       <div class="kb-history-toolbar">
-        <div v-show="historyOpen" class="kb-history-search">
+        <div class="kb-history-search">
           <Input
             v-model="historyQuery"
             placeholder="搜索历史记录"
             aria-label="搜索历史记录"
           />
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          class="icon-btn"
-          type="button"
-          aria-label="新对话"
-          title="新对话"
-          @click="startNewChat"
-        >
-          <Plus class="size-4" />
-        </Button>
       </div>
-      <div v-show="historyOpen" class="kb-history-list">
+      <div class="kb-history-list">
         <p v-if="!historyItems.length && !historyLoading" class="msg">
           {{ historyQuery.trim() ? "没有匹配的历史记录" : "还没有问答记录" }}
         </p>
@@ -464,22 +469,36 @@ function loadMoreHistory() {
           加载更多
         </Button>
       </div>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        class="icon-btn kb-history-toggle rounded-full"
-        type="button"
-        :aria-label="historyOpen ? '收起历史' : '展开历史'"
-        :aria-expanded="historyOpen"
-        :title="historyOpen ? '收起历史' : '展开历史'"
-        @click="toggleHistory"
-      >
-        <ChevronLeft v-if="historyOpen" class="size-4" />
-        <ChevronRight v-else class="size-4" />
-      </Button>
     </section>
 
     <section class="card chat-card">
+      <div class="chat-header">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="icon-btn"
+          type="button"
+          :aria-label="historyOpen ? '收起历史' : '展开历史'"
+          :aria-expanded="historyOpen"
+          :title="historyOpen ? '收起历史' : '展开历史'"
+          @click="toggleHistory"
+        >
+          <PanelLeft class="size-4" />
+        </Button>
+        <Button
+          v-if="canStartNewChat"
+          variant="ghost"
+          size="icon"
+          class="icon-btn"
+          type="button"
+          aria-label="新对话"
+          title="新对话"
+          @click="startNewChat"
+        >
+          <Plus class="size-4" />
+        </Button>
+        <h2 class="chat-title">{{ chatTitle }}</h2>
+      </div>
       <div ref="thread" class="chat-thread">
         <div v-if="!messages.length" class="msg">
           可以问：「{{

@@ -225,6 +225,8 @@ describe("知识库问答历史", () => {
       1,
       30
     );
+    expect(el.querySelector(".chat-title")?.textContent).toBe("新对话");
+    expect(el.querySelector('button[aria-label="新对话"]')).toBeNull();
     expect(el.textContent).toContain("茅台怎么看");
     expect(el.querySelector(".kb-history-item")?.textContent).not.toContain(
       "2026-09-11"
@@ -240,6 +242,8 @@ describe("知识库问答历史", () => {
     await flush();
     expect(api.knowledgeConversation).toHaveBeenCalledWith("conv-1");
     expect(el.textContent).toContain("量能放大可以低吸");
+    expect(el.querySelector(".chat-title")?.textContent).toBe("茅台怎么看");
+    expect(el.querySelector('button[aria-label="新对话"]')).not.toBeNull();
     expect(el.querySelector(".kb-history-item")?.classList.contains("active")).toBe(
       true
     );
@@ -318,6 +322,8 @@ describe("知识库问答历史", () => {
     newChat.click();
     await flush();
     expect(el.textContent).not.toContain("量能放大可以低吸");
+    expect(el.querySelector(".chat-title")?.textContent).toBe("新对话");
+    expect(el.querySelector('button[aria-label="新对话"]')).toBeNull();
     expect(el.textContent).toContain("茅台怎么看");
   });
 
@@ -332,9 +338,9 @@ describe("知识库问答历史", () => {
     expect(
       el.querySelector(".kb-chat-layout")?.classList.contains("is-collapsed")
     ).toBe(true);
-    expect(
-      (el.querySelector(".kb-history-list") as HTMLElement).style.display
-    ).toBe("none");
+    expect((el.querySelector(".kb-history") as HTMLElement).style.display).toBe(
+      "none"
+    );
     (
       el.querySelector('button[aria-label="展开历史"]') as HTMLButtonElement
     ).click();
