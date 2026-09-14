@@ -738,10 +738,10 @@ const highlightPhrasesText = computed({
           这类<strong>聊天模型不能用来转写</strong>。
         </blockquote>
         <div class="grid two">
-          <div class="field">
+          <div class="field field-md">
             <Label>转写模型</Label>
             <Select v-model="transcribeSelect">
-              <SelectTrigger class="w-full">
+              <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -756,25 +756,25 @@ const highlightPhrasesText = computed({
               </SelectContent>
             </Select>
           </div>
-          <div v-if="!localTranscribe" class="field">
+          <div v-if="!localTranscribe" class="field field-md">
             <Label>自定义转写模型名</Label>
             <Input v-model="form.transcribe_model" placeholder="whisper-1" />
           </div>
-          <div v-if="!localTranscribe" class="field">
+          <div v-if="!localTranscribe" class="field field-lg">
             <Label>转写 Base URL</Label>
             <Input
               v-model="form.transcribe_base_url"
               placeholder="https://api.openai.com/v1"
             />
           </div>
-          <div v-if="!localTranscribe" class="field">
+          <div v-if="!localTranscribe" class="field field-lg">
             <Label>转写 API Key</Label>
             <Input v-model="form.transcribe_api_key" type="password" />
           </div>
-          <div class="field">
+          <div class="field field-sm">
             <Label>转写线程</Label>
             <Select v-model="threadSelect">
-              <SelectTrigger class="w-full">
+              <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -829,32 +829,32 @@ const highlightPhrasesText = computed({
           >
         </div>
         <div class="grid two">
-          <div class="field">
+          <div class="field field-md">
             <Label>总结模型</Label>
             <Input
               v-model="form.summarize_model"
               placeholder="deepseek-v4-flash"
             />
           </div>
-          <div class="field">
+          <div class="field field-lg">
             <Label>总结 Base URL</Label>
             <Input
               v-model="form.summarize_base_url"
               placeholder="https://api.deepseek.com/v1"
             />
           </div>
-          <div class="field">
+          <div class="field field-lg">
             <Label>总结 API Key</Label>
             <Input v-model="form.summarize_api_key" type="password" />
           </div>
-          <div class="field">
+          <div class="field field-sm">
             <Label>抽音时长（秒，直播/长回放截取）</Label>
             <Input v-model="form.capture_seconds" />
           </div>
-          <div class="field">
+          <div class="field field-sm">
             <Label>分段并发数</Label>
             <Select v-model="concurrencySelect">
-              <SelectTrigger class="w-full">
+              <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -919,7 +919,7 @@ const highlightPhrasesText = computed({
         股盘面课；词表跟领域走，切换后两边互不影响。
       </p>
       <div class="grid two">
-        <div class="field">
+        <div class="field field-md">
           <div class="flex items-center gap-1">
             <Label>预设</Label>
             <Button
@@ -948,7 +948,7 @@ const highlightPhrasesText = computed({
             </Button>
           </div>
           <Select v-model="domainSelect">
-            <SelectTrigger class="w-full">
+            <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -962,7 +962,7 @@ const highlightPhrasesText = computed({
             </SelectContent>
           </Select>
         </div>
-        <div class="field">
+        <div class="field field-md">
           <Label>领域名称</Label>
           <Input v-model="domainPack.name" @input="markDomainCustom" />
         </div>
@@ -1197,18 +1197,18 @@ const highlightPhrasesText = computed({
         <span>启用每天定时任务</span>
       </label>
       <div class="grid two">
-        <div class="field">
+        <div class="field field-sm">
           <Label>每天几点</Label>
           <Input v-model="schedule.time" type="time" />
         </div>
-        <div class="field">
+        <div class="field field-sm">
           <Label>从哪天开始</Label>
           <Input v-model="schedule.since" type="date" />
         </div>
-        <div class="field">
+        <div class="field field-sm">
           <Label>每次最多新建</Label>
           <Select v-model="maxJobsSelect">
-            <SelectTrigger class="w-full">
+            <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

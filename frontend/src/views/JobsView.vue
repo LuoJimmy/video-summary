@@ -370,35 +370,35 @@ onBeforeUnmount(() => {
       aria-labelledby="create-tab-online"
     >
       <div class="grid two">
-        <div class="field">
+        <div class="field field-lg">
           <Label>页面或媒体地址</Label>
           <Input
             v-model="sourceUrl"
             placeholder="https://www.bilibili.com/video/BV1a4awzsENn"
           />
         </div>
-        <div class="field">
+        <div class="field field-lg">
           <Label>媒体地址覆盖（m3u8/mp4，可选）</Label>
           <Input
             v-model="mediaOverride"
             placeholder="登录后从 Network 复制的流地址"
           />
         </div>
-        <div class="field">
+        <div class="field field-md">
           <Label>标题（可选）</Label>
           <Input v-model="title" />
         </div>
-        <div class="field">
+        <div class="field field-md">
           <Label>视频作者（可选）</Label>
           <Input v-model="author" />
         </div>
-        <div class="field">
+        <div class="field field-md">
           <Label>指定站点（可留空自动匹配）</Label>
           <Select
             :model-value="siteId || '__auto'"
             @update:model-value="setSiteId"
           >
-            <SelectTrigger class="w-full">
+            <SelectTrigger>
               <SelectValue placeholder="自动匹配" />
             </SelectTrigger>
             <SelectContent>
@@ -412,10 +412,10 @@ onBeforeUnmount(() => {
             </SelectContent>
           </Select>
         </div>
-        <div class="field">
+        <div class="field field-md">
           <Label>内容领域</Label>
           <Select :model-value="domainId" @update:model-value="setDomainId">
-            <SelectTrigger class="w-full">
+            <SelectTrigger>
               <SelectValue placeholder="A股盘面课" />
             </SelectTrigger>
             <SelectContent>
@@ -438,7 +438,7 @@ onBeforeUnmount(() => {
       role="tabpanel"
       aria-labelledby="create-tab-local"
     >
-      <div class="field">
+      <div class="field field-md">
         <Label>上传本地视频 / 音频 / 文档</Label>
         <Input
           type="file"
@@ -449,18 +449,18 @@ onBeforeUnmount(() => {
         />
       </div>
       <div class="grid two mt-4">
-        <div class="field">
+        <div class="field field-md">
           <Label>标题（可选）</Label>
           <Input v-model="title" />
         </div>
-        <div class="field">
+        <div class="field field-md">
           <Label>作者（可选）</Label>
           <Input v-model="author" />
         </div>
-        <div class="field">
+        <div class="field field-md">
           <Label>内容领域</Label>
           <Select :model-value="domainId" @update:model-value="setDomainId">
-            <SelectTrigger class="w-full">
+            <SelectTrigger>
               <SelectValue placeholder="A股盘面课" />
             </SelectTrigger>
             <SelectContent>

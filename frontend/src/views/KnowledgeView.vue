@@ -371,10 +371,10 @@ function loadMoreHistory() {
   </p>
 
   <section class="card mb-3">
-    <div class="field">
+    <div class="field field-md">
       <Label>内容领域</Label>
       <Select :model-value="domainId" @update:model-value="setDomain">
-        <SelectTrigger class="w-full">
+        <SelectTrigger>
           <SelectValue placeholder="A股盘面课" />
         </SelectTrigger>
         <SelectContent>

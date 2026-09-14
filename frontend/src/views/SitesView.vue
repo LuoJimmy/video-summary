@@ -258,7 +258,7 @@ onMounted(refresh);
 
   <section class="card">
     <div class="grid two">
-      <div class="field">
+      <div class="field field-md">
         <div class="flex items-center gap-1">
           <Label>当前站点</Label>
           <Button
@@ -287,7 +287,7 @@ onMounted(refresh);
           </Button>
         </div>
         <Select v-if="orderedSites.length" v-model="siteSelect">
-          <SelectTrigger class="w-full">
+          <SelectTrigger>
             <SelectValue placeholder="选择站点" />
           </SelectTrigger>
           <SelectContent>
@@ -301,7 +301,7 @@ onMounted(refresh);
           </SelectContent>
         </Select>
       </div>
-      <div v-if="current" class="field">
+      <div v-if="current" class="field field-md">
         <Label>名称</Label>
         <Input v-model="current.name" placeholder="站点名称" />
       </div>
@@ -309,7 +309,7 @@ onMounted(refresh);
 
     <template v-if="current">
       <p v-if="current.notes" class="msg mt-3">{{ current.notes }}</p>
-      <div class="field mt-3">
+      <div class="field field-lg mt-3">
         <Label>域名规则（逗号分隔）</Label>
         <Input
           :model-value="patternsText(current)"
@@ -317,7 +317,7 @@ onMounted(refresh);
           @update:model-value="setPatterns(current, String($event ?? ''))"
         />
       </div>
-      <div class="field mt-3">
+      <div class="field field-lg mt-3">
         <Label>Cookie</Label>
         <Textarea
           v-model="current.cookie_override"

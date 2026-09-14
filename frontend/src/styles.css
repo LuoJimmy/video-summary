@@ -615,12 +615,40 @@ h3 {
   gap: var(--space-3);
 }
 .grid.two {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, max-content);
+  justify-content: start;
 }
 .field {
   display: grid;
   gap: var(--space-2);
   min-width: 0;
+}
+.field-sm,
+.field-md {
+  justify-self: start;
+}
+.field-sm {
+  width: 14rem;
+  max-width: 100%;
+}
+.field-md {
+  width: 28rem;
+  max-width: 100%;
+}
+.field-lg {
+  width: 100%;
+}
+.grid.two > .field-lg {
+  width: 28rem;
+  max-width: 100%;
+}
+.field-sm [data-slot="input"],
+.field-sm [data-slot="select-trigger"],
+.field-sm [data-slot="textarea"],
+.field-md [data-slot="input"],
+.field-md [data-slot="select-trigger"],
+.field-md [data-slot="textarea"] {
+  width: 100%;
 }
 .model-block + .model-block {
   margin-top: var(--space-5);
@@ -1523,6 +1551,12 @@ label.check small {
   }
   .grid.two {
     grid-template-columns: 1fr;
+  }
+  .field-sm,
+  .field-md,
+  .grid.two > .field-lg {
+    width: 100%;
+    max-width: 100%;
   }
   .row [data-slot="button"] {
     min-height: 2.75rem;
