@@ -92,6 +92,8 @@ const askingClearLogs = ref(false);
 const clearingLogs = ref(false);
 const plugins = ref<PluginInfo[]>([]);
 const pluginBusyId = ref("");
+const askingUninstall = ref(false);
+const uninstallTarget = ref<PluginInfo | null>(null);
 type SettingsTab =
   "appearance" | "models" | "domain" | "schedule" | "plugins" | "about";
 const settingsTabs: { id: SettingsTab; label: string }[] = [
@@ -303,7 +305,7 @@ async function loadSchedule() {
 }
 
 function pluginStatusLabel(status: string) {
-  if (status === "ready") return "已就绪";
+  if (status === "ready") return "已安装";
   if (status === "installing") return "安装中";
   if (status === "failed") return "失败";
   return "未安装";
@@ -343,10 +345,45 @@ async function installDocPlugin(id: string) {
   }
 }
 
-async function uninstallDocPlugin(id: string) {
+function askUninstallPlugin(item: PluginInfo) {
+  if (
+    pluginBusyId.value === item.id ||
+    item.status === "missing" ||
+    item.status === "installing"
+  )
+    return;
+  uninstallTarget.value = item;
+  askingUninstall.value = true;
+}
+
+function closeUninstallPlugin() {
+  askingUninstall.value = false;
+}
+
+async function cancelDocPlugin(id: string) {
   pluginBusyId.value = id;
   try {
-    await api.uninstallPlugin(id);
+    const info = await api.cancelPlugin(id);
+    plugins.value = plugins.value.map((item) =>
+      item.id === id ? info : item
+    );
+    await loadPlugins();
+    toast.success("已取消安装");
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "取消安装失败");
+    await loadPlugins();
+  } finally {
+    pluginBusyId.value = "";
+  }
+}
+
+async function uninstallDocPlugin() {
+  const item = uninstallTarget.value;
+  if (!item) return;
+  askingUninstall.value = false;
+  pluginBusyId.value = item.id;
+  try {
+    await api.uninstallPlugin(item.id);
     await loadPlugins();
     toast.success("已卸载插件");
   } catch (err) {
@@ -1274,6 +1311,7 @@ const highlightPhrasesText = computed({
             <strong>{{ item.title }}</strong>
             <Badge
               variant="outline"
+              class="tag"
               :class="{
                 ok: item.status === 'ready',
                 bad: item.status === 'failed',
@@ -1295,10 +1333,19 @@ const highlightPhrasesText = computed({
               >{{ item.status === "ready" ? "重新安装" : "安装" }}</Button
             >
             <Button
+              v-if="item.status === 'installing'"
+              variant="outline"
+              type="button"
+              :disabled="pluginBusyId === item.id"
+              @click="cancelDocPlugin(item.id)"
+              >取消</Button
+            >
+            <Button
+              v-else
               variant="outline"
               type="button"
               :disabled="pluginBusyId === item.id || item.status === 'missing'"
-              @click="uninstallDocPlugin(item.id)"
+              @click="askUninstallPlugin(item)"
               >卸载</Button
             >
           </div>
@@ -1398,6 +1445,42 @@ const highlightPhrasesText = computed({
             :disabled="savingPreset"
             @click="deleteDomainPreset"
             >确认删除</Button
+          >
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog
+      :open="askingUninstall"
+      @update:open="
+        (next: boolean) => {
+          if (!next) closeUninstallPlugin();
+        }
+      "
+    >
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>卸载插件</DialogTitle>
+          <DialogDescription>
+            确定卸载「{{
+              uninstallTarget?.title || "该插件"
+            }}」？卸载后需要重新安装才能使用。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="Boolean(pluginBusyId)"
+            @click="closeUninstallPlugin"
+            >取消</Button
+          >
+          <Button
+            variant="destructive"
+            type="button"
+            :disabled="Boolean(pluginBusyId)"
+            @click="uninstallDocPlugin"
+            >确认卸载</Button
           >
         </DialogFooter>
       </DialogContent>

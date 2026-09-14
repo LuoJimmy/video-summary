@@ -4,9 +4,11 @@ from app.schemas import PluginOut
 from app.services.plugins import (
     PLUGIN_IDS,
     PluginError,
+    cancel_plugin_install,
     describe_plugin,
     install_plugin,
     list_plugins,
+    mark_plugin_install_started,
     plugins_root,
     uninstall_plugin,
 )
@@ -39,16 +41,30 @@ def install(plugin_id: str, background: BackgroundTasks) -> PluginOut:
     if info.status in {"installing", "ready"}:
         return _out(info)
     lock_path = plugins_root() / f".{plugin_id}.lock"
+    mark_plugin_install_started(plugin_id)
     lock_path.write_text("queued", encoding="utf-8")
     background.add_task(_install, plugin_id)
     return _out(describe_plugin(plugin_id))
+
+
+@router.post("/{plugin_id}/cancel", response_model=PluginOut)
+def cancel_install(plugin_id: str) -> PluginOut:
+    if plugin_id not in PLUGIN_IDS:
+        raise HTTPException(404, "插件不存在")
+    try:
+        return _out(cancel_plugin_install(plugin_id))
+    except PluginError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.post("/{plugin_id}/uninstall", response_model=PluginOut)
 def uninstall(plugin_id: str) -> PluginOut:
     if plugin_id not in PLUGIN_IDS:
         raise HTTPException(404, "插件不存在")
-    uninstall_plugin(plugin_id)
+    try:
+        uninstall_plugin(plugin_id)
+    except PluginError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return _out(describe_plugin(plugin_id))
 
 

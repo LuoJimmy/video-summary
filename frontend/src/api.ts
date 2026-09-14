@@ -449,6 +449,8 @@ export const api = {
   plugins: () => request<PluginInfo[]>("/api/plugins"),
   installPlugin: (id: string) =>
     request<PluginInfo>(`/api/plugins/${id}/install`, { method: "POST" }),
+  cancelPlugin: (id: string) =>
+    request<PluginInfo>(`/api/plugins/${id}/cancel`, { method: "POST" }),
   uninstallPlugin: (id: string) =>
     request<PluginInfo>(`/api/plugins/${id}/uninstall`, { method: "POST" }),
 };

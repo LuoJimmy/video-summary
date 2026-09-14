@@ -7,9 +7,12 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
+from subprocess import Popen
 from typing import Callable
 
 from app.config import settings
@@ -20,12 +23,37 @@ class PluginError(RuntimeError):
     """插件安装或加载失败。"""
 
 
+class PluginCancelled(PluginError):
+    """插件安装被取消。"""
+
+
 ProgressCb = Callable[[int, str], None]
 
 PLUGIN_IDS = ("ocr", "legacy_doc")
 LIBREOFFICE_VERSION = "25.2.5"
 READY_NAME = "READY.json"
 ERROR_NAME = "ERROR.txt"
+
+_current_plugin_id: ContextVar[str | None] = ContextVar("current_plugin_id", default=None)
+_install_gate = threading.Lock()
+_installs: dict[str, "_InstallState"] = {}
+
+
+@dataclass
+class _InstallState:
+    cancel: threading.Event = field(default_factory=threading.Event)
+    done: threading.Event = field(default_factory=threading.Event)
+    running: bool = False
+    proc: Popen | None = None
+
+
+def _install_state(plugin_id: str) -> _InstallState:
+    with _install_gate:
+        state = _installs.get(plugin_id)
+        if state is None:
+            state = _InstallState()
+            _installs[plugin_id] = state
+        return state
 
 
 @dataclass
@@ -49,6 +77,76 @@ def plugin_dir(plugin_id: str) -> Path:
     path = plugins_root() / plugin_id
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _lock_path(plugin_id: str) -> Path:
+    return plugins_root() / f".{plugin_id}.lock"
+
+
+def mark_plugin_install_started(plugin_id: str) -> None:
+    state = _install_state(plugin_id)
+    state.running = True
+    state.done.clear()
+    state.cancel.clear()
+
+
+def _begin_install(plugin_id: str) -> None:
+    state = _install_state(plugin_id)
+    state.running = True
+    state.done.clear()
+
+
+def _finish_install(plugin_id: str) -> None:
+    state = _install_state(plugin_id)
+    state.proc = None
+    state.running = False
+    state.cancel.clear()
+    state.done.set()
+
+
+def _request_plugin_cancel(plugin_id: str) -> None:
+    state = _install_state(plugin_id)
+    state.cancel.set()
+    proc = state.proc
+    if proc is not None and proc.poll() is None:
+        proc.kill()
+
+
+def _is_plugin_cancelled(plugin_id: str | None = None) -> bool:
+    pid = plugin_id or _current_plugin_id.get()
+    if not pid:
+        return False
+    return _install_state(pid).cancel.is_set()
+
+
+def raise_if_plugin_cancelled(plugin_id: str | None = None) -> None:
+    if _is_plugin_cancelled(plugin_id):
+        raise PluginCancelled("插件安装已取消")
+
+
+def _register_plugin_proc(proc: Popen) -> None:
+    pid = _current_plugin_id.get()
+    if not pid:
+        return
+    state = _install_state(pid)
+    state.proc = proc
+    if state.cancel.is_set():
+        proc.kill()
+        raise PluginCancelled("插件安装已取消")
+
+
+def _unregister_plugin_proc() -> None:
+    pid = _current_plugin_id.get()
+    if not pid:
+        return
+    _install_state(pid).proc = None
+
+
+def _reset_plugin_dir(plugin_id: str) -> None:
+    dest = plugin_dir(plugin_id)
+    if dest.exists():
+        shutil.rmtree(dest, ignore_errors=True)
+    dest.mkdir(parents=True, exist_ok=True)
 
 
 def list_plugins() -> list[PluginInfo]:
@@ -94,34 +192,67 @@ def install_plugin(plugin_id: str, progress: ProgressCb | None = None) -> Path:
     if plugin_id not in PLUGIN_IDS:
         raise PluginError(f"未知插件：{plugin_id}")
     dest = plugin_dir(plugin_id)
-    lock_path = plugins_root() / f".{plugin_id}.lock"
-    _report(progress, 5, f"正在安装{describe_plugin(plugin_id).title}…")
-    with _file_lock(lock_path):
-        info = describe_plugin(plugin_id)
-        if info.status == "ready":
-            return dest
-        _write_error(dest, "")
-        try:
-            if plugin_id == "ocr":
-                _install_ocr(dest, progress)
-            else:
-                _install_legacy_doc(dest, progress)
-            _write_ready(dest, extra={"soffice": which_soffice(dest) or ""})
-            _report(progress, 100, "插件已就绪")
-        except Exception as exc:
-            message = str(exc) if isinstance(exc, PluginError) else f"插件安装失败：{exc}"
-            _write_error(dest, message)
-            raise PluginError(message) from exc
-    return dest
+    lock_path = _lock_path(plugin_id)
+    token = _current_plugin_id.set(plugin_id)
+    _begin_install(plugin_id)
+    try:
+        raise_if_plugin_cancelled(plugin_id)
+        _report(progress, 5, f"正在安装{describe_plugin(plugin_id).title}…")
+        with _file_lock(lock_path):
+            raise_if_plugin_cancelled(plugin_id)
+            info = describe_plugin(plugin_id)
+            if info.status == "ready":
+                return dest
+            _write_error(dest, "")
+            try:
+                if plugin_id == "ocr":
+                    _install_ocr(dest, progress)
+                else:
+                    _install_legacy_doc(dest, progress)
+                raise_if_plugin_cancelled(plugin_id)
+                _write_ready(dest, extra={"soffice": which_soffice(dest) or ""})
+                _report(progress, 100, "插件已就绪")
+            except PluginCancelled:
+                if not (dest / READY_NAME).exists():
+                    _reset_plugin_dir(plugin_id)
+                raise
+            except Exception as exc:
+                if _is_plugin_cancelled(plugin_id):
+                    if not (dest / READY_NAME).exists():
+                        _reset_plugin_dir(plugin_id)
+                    raise PluginCancelled("插件安装已取消") from exc
+                message = str(exc) if isinstance(exc, PluginError) else f"插件安装失败：{exc}"
+                _write_error(dest, message)
+                raise PluginError(message) from exc
+        return dest
+    finally:
+        _current_plugin_id.reset(token)
+        _finish_install(plugin_id)
 
 
 def uninstall_plugin(plugin_id: str) -> None:
     if plugin_id not in PLUGIN_IDS:
         raise PluginError(f"未知插件：{plugin_id}")
-    dest = plugin_dir(plugin_id)
-    if dest.exists():
-        shutil.rmtree(dest, ignore_errors=True)
-    dest.mkdir(parents=True, exist_ok=True)
+    if describe_plugin(plugin_id).status == "installing":
+        raise PluginError("安装中不能卸载，请先取消")
+    _reset_plugin_dir(plugin_id)
+
+
+def cancel_plugin_install(plugin_id: str) -> PluginInfo:
+    if plugin_id not in PLUGIN_IDS:
+        raise PluginError(f"未知插件：{plugin_id}")
+    info = describe_plugin(plugin_id)
+    if info.status != "installing" and not _install_state(plugin_id).running:
+        raise PluginError("当前没有正在安装的插件")
+    _request_plugin_cancel(plugin_id)
+    _reset_plugin_dir(plugin_id)
+    state = _install_state(plugin_id)
+    if state.running:
+        state.done.wait(timeout=2 if state.proc else 0.05)
+    else:
+        _lock_path(plugin_id).unlink(missing_ok=True)
+        _finish_install(plugin_id)
+    return describe_plugin(plugin_id)
 
 
 def ensure_ocr_engine(progress=None):
@@ -190,8 +321,8 @@ def which_soffice(plugin_root: Path | None = None) -> str:
 
 def _status_fields(plugin_id: str) -> tuple[str, str, str]:
     dest = plugin_dir(plugin_id)
-    lock_path = plugins_root() / f".{plugin_id}.lock"
-    if lock_path.exists():
+    lock_path = _lock_path(plugin_id)
+    if lock_path.exists() and not _is_plugin_cancelled(plugin_id):
         try:
             if time.time() - lock_path.stat().st_mtime < 1800:
                 return "installing", "", ""
@@ -244,12 +375,27 @@ def _install_ocr(dest: Path, progress: ProgressCb | None) -> None:
         "rapidocr-onnxruntime",
     ]
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True, timeout=600)
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or exc.stdout or str(exc)).strip()
-        raise PluginError(f"安装 OCR 插件失败：{detail or 'pip 安装出错'}。请检查网络后到设置页重试。") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise PluginError("安装 OCR 插件超时，请检查网络后重试") from exc
+        proc = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        _register_plugin_proc(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=600)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.communicate()
+            raise PluginError("安装 OCR 插件超时，请检查网络后重试") from exc
+        finally:
+            _unregister_plugin_proc()
+        raise_if_plugin_cancelled()
+        if proc.returncode != 0:
+            detail = (stderr or stdout or "").strip()
+            raise PluginError(f"安装 OCR 插件失败：{detail or 'pip 安装出错'}。请检查网络后到设置页重试。")
+    except PluginCancelled:
+        raise
     _report(progress, 80, "正在检查 OCR 引擎…")
     _prepare_ocr_env(dest)
     try:
@@ -305,11 +451,15 @@ def _download_file(url: str, dest: Path, progress: ProgressCb | None) -> None:
                 done = 0
                 with dest.open("wb") as handle:
                     for chunk in response.iter_bytes(1024 * 256):
+                        raise_if_plugin_cancelled()
                         handle.write(chunk)
                         done += len(chunk)
                         if total:
                             pct = 20 + int(45 * done / total)
                             _report(progress, min(65, pct), "正在下载 LibreOffice…")
+        except PluginCancelled:
+            dest.unlink(missing_ok=True)
+            raise
         except Exception as exc:
             dest.unlink(missing_ok=True)
             raise PluginError(f"下载 LibreOffice 失败：{exc}。请检查网络后到设置页重试。") from exc
@@ -417,5 +567,6 @@ def _read_error(dest: Path) -> str:
 
 
 def _report(progress: ProgressCb | None, pct: int, message: str) -> None:
+    raise_if_plugin_cancelled()
     if progress:
         progress(pct, message)

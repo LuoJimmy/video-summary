@@ -3,7 +3,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toast } from "vue-sonner";
 import { version as appVersion } from "../../package.json";
-import { api, type AppSettings } from "../api";
+import { api, type AppSettings, type PluginInfo } from "../api";
 import { emptyDomainPack } from "../utils/domain";
 import SettingsView from "./SettingsView.vue";
 
@@ -32,6 +32,7 @@ vi.mock("../api", () => ({
     clearScheduleLogs: vi.fn(),
     plugins: vi.fn(),
     installPlugin: vi.fn(),
+    cancelPlugin: vi.fn(),
     uninstallPlugin: vi.fn(),
   },
 }));
@@ -61,6 +62,27 @@ const sampleSchedule = {
     },
   ],
 };
+
+const samplePlugins: PluginInfo[] = [
+  {
+    id: "ocr",
+    title: "扫描件 OCR",
+    description: "识别扫描 PDF",
+    size_hint: "约 100MB",
+    status: "missing",
+    error: "",
+    soffice: "",
+  },
+  {
+    id: "legacy-doc",
+    title: "旧版 Word",
+    description: "转换 .doc",
+    size_hint: "约 30MB",
+    status: "ready",
+    error: "",
+    soffice: "/usr/bin/soffice",
+  },
+];
 
 const localSettings: AppSettings = {
   transcribe_base_url: "",
@@ -96,7 +118,8 @@ async function mountSettings(
     status: string;
     summary: string;
     detail: unknown[];
-  }> = []
+  }> = [],
+  plugins: PluginInfo[] = samplePlugins
 ) {
   vi.mocked(api.settings).mockResolvedValue(settings);
   vi.mocked(api.lexicon).mockResolvedValue({
@@ -106,17 +129,7 @@ async function mountSettings(
   });
   vi.mocked(api.schedule).mockResolvedValue(sampleSchedule);
   vi.mocked(api.scheduleLogs).mockResolvedValue(logs);
-  vi.mocked(api.plugins).mockResolvedValue([
-    {
-      id: "ocr",
-      title: "扫描件 OCR",
-      description: "识别扫描 PDF",
-      size_hint: "约 100MB",
-      status: "missing",
-      error: "",
-      soffice: "",
-    },
-  ]);
+  vi.mocked(api.plugins).mockResolvedValue(plugins);
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -371,6 +384,95 @@ describe("插件", () => {
     expect(el.textContent).toContain("扫描件 OCR");
     expect(el.textContent).toContain("未安装");
     expect(el.querySelector(".plugin-grid")).toBeTruthy();
-    expect(el.querySelector(".plugin-card")).toBeTruthy();
+    expect(el.querySelectorAll(".plugin-card").length).toBe(2);
+    expect(el.querySelectorAll(".plugin-card-actions").length).toBe(2);
+  });
+
+  it("已安装插件显示成功色标签", async () => {
+    const el = await mountSettings(localSettings);
+    expect(el.textContent).toContain("已安装");
+    expect(el.textContent).not.toContain("已就绪");
+    const badge = [...el.querySelectorAll(".plugin-card .tag")].find((item) =>
+      item.textContent?.includes("已安装")
+    );
+    expect(badge).toBeTruthy();
+    expect(badge?.classList.contains("ok")).toBe(true);
+  });
+
+  it("卸载插件先弹窗确认", async () => {
+    const el = await mountSettings(localSettings);
+    clickSettingsTab(el, "插件");
+    await flush();
+    const uninstallBtn = [...el.querySelectorAll("button")].find(
+      (item) => item.textContent === "卸载" && !item.disabled
+    );
+    expect(uninstallBtn).toBeTruthy();
+    uninstallBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.uninstallPlugin).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("确定卸载「旧版 Word」");
+    const cancel = [...document.body.querySelectorAll("button")].find(
+      (item) => item.textContent === "取消"
+    );
+    cancel?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.uninstallPlugin).not.toHaveBeenCalled();
+
+    uninstallBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    vi.mocked(api.uninstallPlugin).mockResolvedValue({
+      ...samplePlugins[1],
+      status: "missing",
+      soffice: "",
+    });
+    const confirm = [...document.body.querySelectorAll("button")].find(
+      (item) => item.textContent === "确认卸载"
+    );
+    confirm?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.uninstallPlugin).toHaveBeenCalledWith("legacy-doc");
+  });
+
+  it("安装中只能取消，取消后变成未安装", async () => {
+    vi.mocked(api.uninstallPlugin).mockClear();
+    vi.mocked(api.cancelPlugin).mockClear();
+    const installing: PluginInfo = {
+      ...samplePlugins[0],
+      status: "installing",
+    };
+    const el = await mountSettings(localSettings, [], [
+      installing,
+      samplePlugins[1],
+    ]);
+    clickSettingsTab(el, "插件");
+    await flush();
+    expect(el.textContent).toContain("安装中");
+    const ocrCard = [...el.querySelectorAll(".plugin-card")].find((item) =>
+      item.textContent?.includes("扫描件 OCR")
+    );
+    expect(ocrCard).toBeTruthy();
+    expect(ocrCard?.textContent).toContain("取消");
+    expect(
+      [...(ocrCard?.querySelectorAll("button") || [])].some(
+        (item) => item.textContent === "卸载" && !item.disabled
+      )
+    ).toBe(false);
+    const cancelBtn = [...(ocrCard?.querySelectorAll("button") || [])].find(
+      (item) => item.textContent === "取消"
+    );
+    vi.mocked(api.cancelPlugin).mockResolvedValue({
+      ...installing,
+      status: "missing",
+    });
+    vi.mocked(api.plugins).mockResolvedValue([
+      { ...installing, status: "missing" },
+      samplePlugins[1],
+    ]);
+    cancelBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.cancelPlugin).toHaveBeenCalledWith("ocr");
+    expect(api.uninstallPlugin).not.toHaveBeenCalled();
+    expect(ocrCard?.textContent).toContain("未安装");
+    expect(ocrCard?.textContent).not.toContain("安装中");
   });
 });

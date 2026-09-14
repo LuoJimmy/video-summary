@@ -22,6 +22,41 @@ def test_plugins_list(client):
     assert {item["id"] for item in items} >= {"ocr", "legacy_doc"}
 
 
+def test_cancel_plugin_when_idle(client, tmp_path, monkeypatch):
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    resp = client.post("/api/plugins/ocr/cancel")
+    assert resp.status_code == 400
+
+
+def test_uninstall_installing_plugin_rejected(client, tmp_path, monkeypatch):
+    from app.config import settings as app_settings
+    from app.services.plugins import plugins_root
+
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    lock = plugins_root() / ".ocr.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("queued", encoding="utf-8")
+    resp = client.post("/api/plugins/ocr/uninstall")
+    assert resp.status_code == 409
+    assert "取消" in resp.json()["detail"]
+
+
+def test_cancel_queued_plugin(client, tmp_path, monkeypatch):
+    from app.config import settings as app_settings
+    from app.services.plugins import mark_plugin_install_started, plugins_root
+
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    mark_plugin_install_started("ocr")
+    lock = plugins_root() / ".ocr.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("queued", encoding="utf-8")
+    resp = client.post("/api/plugins/ocr/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "missing"
+
+
 def test_document_file_preview(client, db_session, tmp_path, monkeypatch):
     from app.config import settings as app_settings
 

@@ -234,6 +234,10 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+  button:disabled,
+  [role="button"]:disabled {
+    cursor: not-allowed;
+  }
 }
 
 strong {
@@ -450,6 +454,7 @@ h3 {
   flex-direction: column;
   gap: var(--space-2);
   min-width: 0;
+  height: 100%;
   padding: var(--space-3);
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -465,8 +470,15 @@ h3 {
 .plugin-card .error {
   margin: 0;
 }
-.plugin-card-actions {
+.row.plugin-card-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: stretch;
   margin-top: auto;
+}
+.row.plugin-card-actions [data-slot="button"] {
+  width: 100%;
+  min-width: 0;
 }
 .about-list {
   display: grid;
@@ -671,7 +683,7 @@ h3 {
 [data-slot="button"][data-variant="outline"].text-destructive {
   border-color: color-mix(in srgb, var(--bad) 42%, var(--line));
 }
-[data-slot="button"][data-variant="outline"].text-destructive:hover {
+[data-slot="button"][data-variant="outline"].text-destructive:hover:not(:disabled) {
   background: color-mix(in srgb, var(--bad) 22%, transparent);
   color: var(--bad);
   border-color: var(--bad);
