@@ -401,14 +401,16 @@ h3 {
   margin-bottom: var(--space-4);
   box-shadow: var(--shadow);
 }
-.settings-tablist {
+.settings-tablist,
+.tablist {
   display: flex;
   flex-wrap: wrap;
   gap: 0.125rem;
   margin-bottom: var(--space-2);
   padding: 0;
 }
-.settings-tab {
+.settings-tab,
+.tab {
   appearance: none;
   border: 0;
   background: transparent;
@@ -421,14 +423,17 @@ h3 {
   line-height: 1.2;
   cursor: pointer;
 }
-.settings-tab:hover {
+.settings-tab:hover,
+.tab:hover {
   color: var(--strong);
 }
-.settings-tab[aria-selected="true"] {
+.settings-tab[aria-selected="true"],
+.tab[aria-selected="true"] {
   background: var(--chip);
   color: var(--strong);
 }
-.settings-tab:focus-visible {
+.settings-tab:focus-visible,
+.tab:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1496,7 +1501,8 @@ label.check small {
   .card {
     padding: 0.875rem;
   }
-  .settings-tab {
+  .settings-tab,
+  .tab {
     min-height: 2.25rem;
     padding: 0.5rem 0.7rem;
   }

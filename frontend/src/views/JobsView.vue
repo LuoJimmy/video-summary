@@ -32,6 +32,12 @@ import { toast } from "vue-sonner";
 
 const PAGE_SIZE = 10;
 const router = useRouter();
+type CreateTab = "online" | "local";
+const createTabs: { id: CreateTab; label: string }[] = [
+  { id: "online", label: "在线任务" },
+  { id: "local", label: "本地任务" },
+];
+const createTab = ref<CreateTab>("online");
 const jobs = ref<Job[]>([]);
 const total = ref(0);
 const page = ref(1);
@@ -275,6 +281,14 @@ async function createFromFile() {
   }
 }
 
+function setCreateTab(id: CreateTab) {
+  createTab.value = id;
+}
+
+function setSummarizeDocument(value: boolean | "indeterminate") {
+  summarizeDocument.value = value === true;
+}
+
 function setSiteId(value: string | null) {
   siteId.value = !value || value === "__auto" ? "" : value;
 }
@@ -329,76 +343,145 @@ onBeforeUnmount(() => {
 <template>
   <h1>任务</h1>
   <p class="sub">
-    支持本地文件、线上视频、HLS、B
-    站，以及 PDF / Word / Markdown / 网页。文档默认直接入库原文。
+    支持本地文件、线上视频、HLS、B 站，以及 PDF / Word / Markdown /
+    网页。文档默认直接入库原文。
   </p>
+  <div class="tablist" role="tablist" aria-label="创建任务方式">
+    <button
+      v-for="item in createTabs"
+      :id="`create-tab-${item.id}`"
+      :key="item.id"
+      type="button"
+      role="tab"
+      class="tab"
+      :aria-selected="createTab === item.id"
+      :aria-controls="`create-panel-${item.id}`"
+      :tabindex="createTab === item.id ? 0 : -1"
+      @click="setCreateTab(item.id)"
+    >
+      {{ item.label }}
+    </button>
+  </div>
   <section class="card">
-    <div class="grid two">
-      <div class="field">
-        <Label>页面或媒体地址</Label>
-        <Input
-          v-model="sourceUrl"
-          placeholder="https://www.bilibili.com/video/BV1a4awzsENn"
-        />
-      </div>
-      <div class="field">
-        <Label>媒体地址覆盖（m3u8/mp4，可选）</Label>
-        <Input
-          v-model="mediaOverride"
-          placeholder="登录后从 Network 复制的流地址"
-        />
-      </div>
-      <div class="field">
-        <Label>标题（可选）</Label>
-        <Input v-model="title" />
-      </div>
-      <div class="field">
-        <Label>视频作者（可选）</Label>
-        <Input v-model="author" />
-      </div>
-      <div class="field">
-        <Label>指定站点（可留空自动匹配）</Label>
-        <Select
-          :model-value="siteId || '__auto'"
-          @update:model-value="setSiteId"
-        >
-          <SelectTrigger class="w-full">
-            <SelectValue placeholder="自动匹配" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__auto">自动匹配</SelectItem>
-            <SelectItem v-for="site in sites" :key="site.id" :value="site.id">{{
-              site.name
-            }}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div class="field">
-        <Label>内容领域</Label>
-        <Select :model-value="domainId" @update:model-value="setDomainId">
-          <SelectTrigger class="w-full">
-            <SelectValue placeholder="A股盘面课" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem
-              v-for="item in domainPresets"
-              :key="item.id"
-              :value="item.id"
-            >
-              {{ item.name }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
+    <div
+      v-show="createTab === 'online'"
+      id="create-panel-online"
+      role="tabpanel"
+      aria-labelledby="create-tab-online"
+    >
+      <div class="grid two">
+        <div class="field">
+          <Label>页面或媒体地址</Label>
+          <Input
+            v-model="sourceUrl"
+            placeholder="https://www.bilibili.com/video/BV1a4awzsENn"
+          />
+        </div>
+        <div class="field">
+          <Label>媒体地址覆盖（m3u8/mp4，可选）</Label>
+          <Input
+            v-model="mediaOverride"
+            placeholder="登录后从 Network 复制的流地址"
+          />
+        </div>
+        <div class="field">
+          <Label>标题（可选）</Label>
+          <Input v-model="title" />
+        </div>
+        <div class="field">
+          <Label>视频作者（可选）</Label>
+          <Input v-model="author" />
+        </div>
+        <div class="field">
+          <Label>指定站点（可留空自动匹配）</Label>
+          <Select
+            :model-value="siteId || '__auto'"
+            @update:model-value="setSiteId"
+          >
+            <SelectTrigger class="w-full">
+              <SelectValue placeholder="自动匹配" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__auto">自动匹配</SelectItem>
+              <SelectItem
+                v-for="site in sites"
+                :key="site.id"
+                :value="site.id"
+                >{{ site.name }}</SelectItem
+              >
+            </SelectContent>
+          </Select>
+        </div>
+        <div class="field">
+          <Label>内容领域</Label>
+          <Select :model-value="domainId" @update:model-value="setDomainId">
+            <SelectTrigger class="w-full">
+              <SelectValue placeholder="A股盘面课" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem
+                v-for="item in domainPresets"
+                :key="item.id"
+                :value="item.id"
+              >
+                {{ item.name }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
     </div>
+
+    <div
+      v-show="createTab === 'local'"
+      id="create-panel-local"
+      role="tabpanel"
+      aria-labelledby="create-tab-local"
+    >
+      <div class="field">
+        <Label>上传本地视频 / 音频 / 文档</Label>
+        <Input
+          type="file"
+          accept="video/*,audio/*,.pdf,.doc,.docx,.md,.txt,.html,.htm,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/html"
+          @change="
+            file = ($event.target as HTMLInputElement).files?.[0] || null
+          "
+        />
+      </div>
+      <div class="grid two mt-4">
+        <div class="field">
+          <Label>标题（可选）</Label>
+          <Input v-model="title" />
+        </div>
+        <div class="field">
+          <Label>作者（可选）</Label>
+          <Input v-model="author" />
+        </div>
+        <div class="field">
+          <Label>内容领域</Label>
+          <Select :model-value="domainId" @update:model-value="setDomainId">
+            <SelectTrigger class="w-full">
+              <SelectValue placeholder="A股盘面课" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem
+                v-for="item in domainPresets"
+                :key="item.id"
+                :value="item.id"
+              >
+                {{ item.name }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+
     <div class="mt-4 flex items-center gap-2">
       <Checkbox
         id="summarize-document"
         :checked="summarizeDocument"
-        @update:checked="
-          (value: boolean | 'indeterminate') =>
-            (summarizeDocument = value === true)
-        "
+        @update:checked="setSummarizeDocument"
       />
       <Label for="summarize-document">文档生成 AI 总结</Label>
       <button
@@ -408,36 +491,21 @@ onBeforeUnmount(() => {
         aria-describedby="summarize-document-hint"
       >
         <Info aria-hidden="true" />
-        <span
-          id="summarize-document-hint"
-          class="info-tip-text"
-          role="tooltip"
-        >
+        <span id="summarize-document-hint" class="info-tip-text" role="tooltip">
           文档/网页默认直接入库原文；勾选后才调用总结模型。音视频始终会总结。
         </span>
       </button>
     </div>
-    <div class="row mt-4">
+    <div v-show="createTab === 'online'" class="row mt-4">
       <Button variant="outline" type="button" @click="doPreview">预解析</Button>
       <Button type="button" @click="createFromUrl">开始转写总结</Button>
     </div>
-    <p v-if="preview" class="msg mt-3">
+    <p v-if="preview && createTab === 'online'" class="msg mt-3">
       适配器 {{ preview.adapter }} / {{ preview.source_type }}
       <br />
       {{ preview.message || preview.media_url || "已解析到媒体地址" }}
     </p>
-  </section>
-
-  <section class="card">
-    <div class="field">
-      <Label>或上传本地视频 / 音频 / 文档</Label>
-      <Input
-        type="file"
-        accept="video/*,audio/*,.pdf,.doc,.docx,.md,.txt,.html,.htm,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/html"
-        @change="file = ($event.target as HTMLInputElement).files?.[0] || null"
-      />
-    </div>
-    <div class="row mt-3">
+    <div v-show="createTab === 'local'" class="row mt-4">
       <Button type="button" @click="createFromFile">上传并处理</Button>
     </div>
   </section>

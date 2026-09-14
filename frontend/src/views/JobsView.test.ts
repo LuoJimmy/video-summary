@@ -183,9 +183,7 @@ describe("任务列表筛选", () => {
   });
 
   it("列表在地址前展示作者并用间隔符隔开", async () => {
-    const el = await mountJobs([
-      makeJob({ author: "加菲财经" }),
-    ]);
+    const el = await mountJobs([makeJob({ author: "加菲财经" })]);
     expect(el.querySelector(".list-item .msg")?.textContent).toBe(
       "加菲财经 · https://cdn.example.com/a.mp4"
     );
@@ -270,9 +268,39 @@ describe("任务列表筛选", () => {
   });
 });
 
+function clickCreateTab(el: HTMLElement, label: string) {
+  const tab = [...el.querySelectorAll('[role="tab"]')].find(
+    (item) => item.textContent?.trim() === label
+  ) as HTMLButtonElement | undefined;
+  expect(tab).toBeTruthy();
+  tab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}
+
 describe("文档来源", () => {
+  it("用 tab 切换在线任务和本地任务", async () => {
+    const el = await mountJobs();
+    const tabs = [...el.querySelectorAll('[role="tab"]')].map(
+      (item) => item.textContent?.trim() || ""
+    );
+    expect(tabs).toEqual(["在线任务", "本地任务"]);
+    const online = el.querySelector("#create-panel-online") as HTMLElement;
+    const local = el.querySelector("#create-panel-local") as HTMLElement;
+    expect(online.style.display).not.toBe("none");
+    expect(local.style.display).toBe("none");
+    expect(el.textContent).toContain("开始转写总结");
+    clickCreateTab(el, "本地任务");
+    await flush();
+    expect(local.style.display).not.toBe("none");
+    expect(online.style.display).toBe("none");
+    expect(el.textContent).toContain("上传并处理");
+    expect(el.textContent).toContain("文档生成 AI 总结");
+    expect(el.querySelector("#summarize-document")).toBeTruthy();
+  });
+
   it("上传接受文档并默认不勾选总结", async () => {
     const el = await mountJobs();
+    clickCreateTab(el, "本地任务");
+    await flush();
     expect(el.textContent).toContain("文档生成 AI 总结");
     const hint = el.querySelector(".info-tip") as HTMLButtonElement | null;
     expect(hint).toBeTruthy();
@@ -284,8 +312,8 @@ describe("文档来源", () => {
     expect(file.accept).toContain(".pdf");
     expect(file.accept).toContain(".doc");
     const box = el.querySelector("#summarize-document");
-    expect(box?.getAttribute("data-state") || box?.getAttribute("aria-checked")).not.toBe(
-      "true"
-    );
+    expect(
+      box?.getAttribute("data-state") || box?.getAttribute("aria-checked")
+    ).not.toBe("true");
   });
 });
