@@ -495,8 +495,13 @@ h3 {
   font-variant-numeric: tabular-nums;
 }
 .about-nav {
-  width: 100%;
-  justify-content: space-between;
+  width: fit-content;
+  max-width: 100%;
+  justify-self: start;
+  justify-content: flex-start;
+  padding-inline: 0;
+  text-align: left;
+  gap: var(--space-2);
 }
 .about-nav-icon {
   width: 1rem;

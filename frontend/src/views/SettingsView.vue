@@ -14,7 +14,7 @@ import {
   ChevronRight,
   Loader2,
   Plus,
-import { ChevronRight, Loader2, Plus, Trash2 } from "@lucide/vue";
+  SquareArrowOutUpRight,
   Trash2,
 } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
@@ -1439,10 +1439,17 @@ const highlightPhrasesText = computed({
         </div>
         <div class="field">
           <Label>更新日志</Label>
-          <Button variant="outline" class="about-nav" as-child>
+          <Button
+            variant="ghost"
+            class="about-nav h-auto justify-start px-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+            as-child
+          >
             <router-link to="/settings/changelog">
               <span>查看本版本更新</span>
-              <ChevronRight class="about-nav-icon" aria-hidden="true" />
+              <SquareArrowOutUpRight
+                class="about-nav-icon"
+                aria-hidden="true"
+              />
             </router-link>
           </Button>
         </div>
