@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref } from "vue";
-import { Pencil } from "@lucide/vue";
+import { Check, Pencil, X } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -81,10 +81,30 @@ function onKey(event: KeyboardEvent) {
         aria-label="任务标题"
         @keydown="onKey"
       />
-      <Button type="button" :disabled="saving" @click="commit">保存</Button>
-      <Button variant="outline" type="button" :disabled="saving" @click="cancel"
-        >取消</Button
+      <Button
+        variant="ghost"
+        size="icon"
+        class="title-save-btn"
+        type="button"
+        :disabled="saving"
+        aria-label="保存"
+        title="保存"
+        @click="commit"
       >
+        <Check aria-hidden="true" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="title-cancel-btn"
+        type="button"
+        :disabled="saving"
+        aria-label="取消"
+        title="取消"
+        @click="cancel"
+      >
+        <X aria-hidden="true" />
+      </Button>
     </template>
     <template v-else>
       <h1 v-if="heading">{{ displayTitle() }}</h1>

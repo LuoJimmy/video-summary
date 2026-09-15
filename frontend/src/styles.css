@@ -435,10 +435,14 @@ h3 {
   color: var(--bad);
   background: color-mix(in srgb, var(--bad) 16%, transparent);
 }
-.title-edit-btn {
+.title-edit-btn,
+.title-save-btn,
+.title-cancel-btn {
   color: var(--muted);
 }
-.title-edit-btn:hover {
+.title-edit-btn:hover,
+.title-save-btn:hover:not(:disabled),
+.title-cancel-btn:hover:not(:disabled) {
   color: var(--text);
 }
 .sub {
@@ -961,6 +965,18 @@ h3 {
 .list-title-row .title-editor {
   flex: 1;
   min-width: 0;
+}
+.list-title-row .title-edit-btn {
+  opacity: 0;
+}
+.list-title-row .title-editor:hover .title-edit-btn,
+.list-title-row .title-editor:focus-within .title-edit-btn {
+  opacity: 1;
+}
+@media (hover: none) {
+  .list-title-row .title-edit-btn {
+    opacity: 1;
+  }
 }
 .date-badge {
   font-size: 12px;
