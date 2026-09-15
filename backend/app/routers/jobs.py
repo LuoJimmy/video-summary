@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Query as SAQuery, Session
@@ -12,13 +12,17 @@ from app.config import settings
 from app.database import get_db
 from app.models import Job, stamp_job_start
 from app.schemas import (
+    CatalogPreviewItem,
     JobBatchActionIn,
     JobBatchActionOut,
     JobBatchFailedItem,
+    JobCatalogIn,
+    JobCatalogOut,
     JobCreateIn,
     JobListOut,
     JobMediaOut,
     JobOut,
+    JobRetryIn,
     JobUpdateIn,
     ResolvePreview,
 )
@@ -32,12 +36,19 @@ from app.services.document import (
     resolve_preview_file,
     webpage_preview_html,
 )
-from app.services.ingest.base import is_document_source, local_source_type
-from app.services.ingest import resolve_media
+from app.services.ingest.base import CatalogError, CATALOG_BATCH_LIMIT, is_document_source, local_source_type
+from app.services.ingest.registry import detect_catalog, list_catalog, resolve_media
 from app.services.pipeline import get_pipeline
 from app.services.media import MediaError, probe_creation_time
 from app.services.playback import ensure_play_file, refresh_job_media
 from app.services.cancel import clear_cancel, request_cancel
+from app.services.schedule import (
+    _execute_jobs,
+    _existing_catalog,
+    catalog_item_exists,
+    naive_utc,
+    remember_catalog_item,
+)
 from app.services.sourcetime import file_created_at, parse_source_datetime
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -297,10 +308,70 @@ def preview_job_file(
     )
 
 
+def _catalog_preview(payload: JobCreateIn, db: Session) -> ResolvePreview:
+    catalog = detect_catalog(payload.source_url)
+    if catalog is None:
+        raise HTTPException(400, "不是可展开的空间/店铺/站点地址")
+    auth = build_auth(
+        db,
+        url=payload.source_url,
+        site_id=payload.site_id,
+        auth_profile_id=payload.auth_profile_id,
+    )
+    if catalog.adapter and (not auth.adapter or auth.adapter == "generic"):
+        auth.adapter = catalog.adapter
+    try:
+        page = list_catalog(
+            catalog.adapter,
+            auth,
+            catalog.catalog_id,
+            cursor=payload.cursor or None,
+            limit=CATALOG_BATCH_LIMIT,
+        )
+    except CatalogError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    existing = _existing_catalog(db)
+    items: list[CatalogPreviewItem] = []
+    existing_count = 0
+    for item in page.items:
+        exists = catalog_item_exists(existing, item.source_url, item.title, item.created_at)
+        if exists:
+            existing_count += 1
+        items.append(
+            CatalogPreviewItem(
+                source_url=item.source_url,
+                title=item.title,
+                author=item.author,
+                created_at=item.created_at,
+                exists=exists,
+            )
+        )
+    message = page.message
+    if not message and page.next_cursor:
+        message = f"本批 {len(items)} 条。确认后若还有后续，会在创建区提示继续拉取。"
+    elif not message:
+        message = f"本批 {len(items)} 条。已存在的创建时会跳过。"
+    return ResolvePreview(
+        adapter=catalog.adapter,
+        title=catalog.label,
+        source_type="catalog",
+        message=message,
+        catalog=True,
+        catalog_label=catalog.label,
+        listed=len(items),
+        existing=existing_count,
+        next_cursor=page.next_cursor,
+        truncated=page.truncated,
+        items=items,
+    )
+
+
 @router.post("/preview", response_model=ResolvePreview)
 def preview_source(payload: JobCreateIn, db: Session = Depends(get_db)) -> ResolvePreview:
     if not payload.source_url.strip() and not payload.media_url_override.strip():
         raise HTTPException(400, "请提供页面地址或媒体地址")
+    if detect_catalog(payload.source_url) is not None:
+        return _catalog_preview(payload, db)
     auth = build_auth(
         db,
         url=payload.source_url,
@@ -316,6 +387,69 @@ def preview_source(payload: JobCreateIn, db: Session = Depends(get_db)) -> Resol
         needs_media_url=resolved.needs_media_url,
         message=resolved.message,
         extra=resolved.extra,
+    )
+
+
+@router.post("/from-catalog", response_model=JobCatalogOut)
+def create_jobs_from_catalog(payload: JobCatalogIn, db: Session = Depends(get_db)) -> JobCatalogOut:
+    catalog = detect_catalog(payload.source_url)
+    if catalog is None:
+        raise HTTPException(400, "不是可展开的空间/店铺/站点地址")
+    picks: list[CatalogPreviewItem] = []
+    seen: set[str] = set()
+    for item in payload.items:
+        url = (item.source_url or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        picks.append(item)
+    if not picks:
+        raise HTTPException(400, "请至少选择一条视频")
+    existing = _existing_catalog(db)
+    created_ids: list[str] = []
+    skipped = 0
+    domain_id = job_domain_id(payload.domain_id)
+    author = payload.author.strip()
+    for item in picks:
+        url = item.source_url.strip()
+        if catalog_item_exists(existing, url, item.title, item.created_at) or item.exists:
+            skipped += 1
+            continue
+        job = Job(
+            title=(item.title or "").strip() or "未命名任务",
+            author=author or (item.author or "").strip(),
+            source_url=url,
+            site_id=payload.site_id,
+            auth_profile_id=payload.auth_profile_id,
+            domain_id=domain_id,
+            status="pending",
+            stage="queued",
+            source_created_at=naive_utc(item.created_at),
+        )
+        stamp_job_start(job)
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        created_ids.append(job.id)
+        remember_catalog_item(existing, url, item.title, item.created_at)
+    if created_ids:
+        _execute_jobs(created_ids)
+    label = payload.catalog_label.strip() or catalog.label
+    if created_ids and skipped:
+        message = f"已创建 {len(created_ids)} 个任务（跳过 {skipped} 个）。"
+    elif created_ids:
+        message = f"已创建 {len(created_ids)} 个任务。"
+    else:
+        message = f"没有新任务，跳过 {skipped} 条已存在。"
+    if payload.next_cursor:
+        message += f"该{label}还有后续内容。"
+    return JobCatalogOut(
+        created=len(created_ids),
+        skipped=skipped,
+        next_cursor=payload.next_cursor,
+        truncated=payload.truncated,
+        message=message.strip(),
+        catalog_label=label,
     )
 
 
@@ -499,10 +633,17 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
 
 
 @router.post("/{job_id}/retry", response_model=JobOut)
-def retry_job(job_id: str, background: BackgroundTasks, db: Session = Depends(get_db)) -> JobOut:
+def retry_job(
+    job_id: str,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    payload: JobRetryIn = Body(default_factory=JobRetryIn),
+) -> JobOut:
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "任务不存在")
+    if payload.media_url_override is not None:
+        job.media_url_override = payload.media_url_override.strip()
     _apply_retry(job)
     db.commit()
     db.refresh(job)

@@ -100,6 +100,114 @@ def test_schedule_skips_existing_url(client, db_session, monkeypatch):
     assert client.get("/api/schedule/logs").json() == []
 
 
+def test_catalog_item_exists_matches_xiaoe_short_link():
+    from app.services.schedule import CatalogExistsIndex, catalog_item_exists, remember_catalog_item
+
+    index = CatalogExistsIndex()
+    remember_catalog_item(
+        index,
+        "https://etrsz.xetslk.com/sl/3NFDU8",
+        "9.10行情梳理",
+        datetime(2026, 9, 10, 11, 30),
+    )
+    remember_catalog_item(
+        index,
+        "https://etrsz.xetslk.com/sl/1uhCMi",
+        "一周行情梳理",
+        datetime(2026, 9, 6, 11, 30),
+    )
+    remember_catalog_item(
+        index,
+        "https://etrsz.xetslk.com/sl/TLb2f",
+        "一周行情梳理",
+        datetime(2026, 8, 23, 11, 30),
+    )
+    assert catalog_item_exists(
+        index,
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo",
+        "9.10行情梳理",
+        datetime(2026, 9, 10, 11, 30, tzinfo=timezone.utc),
+    )
+    assert catalog_item_exists(
+        index,
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_week?app_id=appdemo",
+        "一周行情梳理",
+        datetime(2026, 9, 6, 11, 30, tzinfo=timezone.utc),
+    )
+    assert not catalog_item_exists(
+        index,
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_new?app_id=appdemo",
+        "9.15行情梳理",
+        datetime(2026, 9, 15, 11, 30, tzinfo=timezone.utc),
+    )
+    assert not catalog_item_exists(
+        index,
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_week2?app_id=appdemo",
+        "一周行情梳理",
+        datetime(2026, 9, 13, 11, 30, tzinfo=timezone.utc),
+    )
+    remember_catalog_item(
+        index,
+        "https://etrsz.xetslk.com/sl/veJnp",
+        "8.31 9月可能的主线梳理",
+        datetime(2026, 8, 30, 16, 0),
+    )
+    assert catalog_item_exists(
+        index,
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_topic?app_id=appdemo",
+        "9月可能的主线梳理",
+        datetime(2026, 8, 31, 11, 30, tzinfo=timezone.utc),
+    )
+    remember_catalog_item(
+        index,
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_abc?app_id=appdemo",
+        "资源课",
+    )
+    assert catalog_item_exists(
+        index,
+        "https://appdemo.mp.xiaoeknow.com/v4/course/alive/l_abc",
+        "别名",
+    )
+
+
+def test_schedule_skips_xiaoe_short_link_by_title_date(client, db_session, monkeypatch):
+    xiaoe, _ = _enable_xiaoe(client)
+    db_session.add(
+        Job(
+            title="9.10行情梳理",
+            source_url="https://etrsz.xetslk.com/sl/3NFDU8",
+            source_created_at=datetime(2026, 9, 10, 11, 30),
+            site_id=xiaoe["id"],
+            status="done",
+            stage="done",
+        )
+    )
+    db_session.commit()
+
+    def fake_list(adapter_name, auth, catalog_id, since=None):
+        return [
+            CatalogItem(
+                source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo",
+                title="9.10行情梳理",
+                created_at=datetime(2026, 9, 10, 11, 30, tzinfo=timezone.utc),
+            ),
+            CatalogItem(
+                source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_new?app_id=appdemo",
+                title="9.15行情梳理",
+                created_at=datetime(2026, 9, 15, 11, 30, tzinfo=timezone.utc),
+            ),
+        ]
+
+    monkeypatch.setattr("app.services.schedule.list_catalog", fake_list)
+    log = client.post("/api/schedule/run").json()
+    assert log["detail"][0]["created"] == 1
+    assert log["detail"][0]["skipped"] == 1
+    jobs = client.get("/api/jobs").json()["items"]
+    urls = {item["source_url"] for item in jobs}
+    assert "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_new?app_id=appdemo" in urls
+    assert "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo" not in urls
+
+
 def test_schedule_since_and_max_jobs(client, monkeypatch):
     _enable_xiaoe(client, max_jobs=1, since="2026-08-13")
 

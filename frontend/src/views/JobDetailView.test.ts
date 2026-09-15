@@ -383,6 +383,46 @@ describe("回到顶部", () => {
   });
 });
 
+describe("媒体地址覆盖", () => {
+  it("默认不显示，解析失败后展开并随重试提交", async () => {
+    const failed = makeJob({
+      status: "failed",
+      stage: "failed",
+      progress: 0,
+      error: "无法解析媒体地址，请填写媒体地址覆盖后重试",
+    });
+    vi.mocked(api.job).mockResolvedValue(failed);
+    vi.mocked(api.retryJob).mockResolvedValue(
+      makeJob({ status: "pending", stage: "queued", error: "" })
+    );
+    const el = await mountDetail();
+    expect(el.textContent).toContain("媒体地址覆盖");
+    const input = el.querySelector(
+      "input[placeholder='登录后从 Network 复制的流地址']"
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+    input.value = "https://cdn.example.com/live.m3u8";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    const retry = [...el.querySelectorAll("button")].find(
+      (item) => item.textContent?.trim() === "重试"
+    ) as HTMLButtonElement;
+    retry.click();
+    await flush();
+    expect(api.retryJob).toHaveBeenCalledWith("job-1", {
+      media_url_override: "https://cdn.example.com/live.m3u8",
+    });
+  });
+
+  it("成功任务不显示媒体地址覆盖", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({ status: "done", stage: "done", progress: 100 })
+    );
+    const el = await mountDetail();
+    expect(el.textContent).not.toContain("媒体地址覆盖");
+  });
+});
+
 describe("详情返回入口", () => {
   it("默认返回任务列表", async () => {
     vi.mocked(api.job).mockResolvedValue(

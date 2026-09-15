@@ -12,6 +12,8 @@ import { useWindowScroll } from "@vueuse/core";
 import { ChevronLeft, ChevronUp } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { api, type Job } from "../api";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
@@ -33,7 +35,7 @@ import {
   statusLabel,
 } from "../utils/time";
 import { toast } from "vue-sonner";
-import { documentPreviewKind, isDocumentSource, locatorPage, publicSourceUrl, sourceTypeLabel } from "../utils/source";
+import { documentPreviewKind, isDocumentSource, locatorPage, needsMediaOverrideError, publicSourceUrl, sourceTypeLabel } from "../utils/source";
 
 const route = useRoute();
 const router = useRouter();
@@ -48,6 +50,7 @@ const backLabel = computed(() =>
 const job = ref<Job | null>(null);
 const player = ref<{ seek: (n: number) => void } | null>(null);
 const askingDelete = ref(false);
+const mediaOverride = ref("");
 const playSrc = ref("");
 const playHint = ref("");
 const nowMs = ref(Date.now());
@@ -105,6 +108,11 @@ const canRetrySteps = computed(() => {
 });
 const canReuseTranscript = computed(() =>
   Boolean(hasTranscript.value && canRetrySteps.value)
+);
+const showMediaOverride = computed(
+  () =>
+    Boolean(mediaOverride.value.trim()) ||
+    needsMediaOverrideError(job.value?.error)
 );
 const timingRows = computed(() => {
   const timing = job.value?.timing || {};
@@ -280,9 +288,21 @@ function onPlayerError(message: string) {
   playHint.value = message;
 }
 
+watch(
+  () => job.value?.id,
+  (id) => {
+    mediaOverride.value = id ? job.value?.media_url_override || "" : "";
+  }
+);
+
 async function retry() {
   if (!job.value) return;
-  job.value = await api.retryJob(job.value.id);
+  job.value = await api.retryJob(
+    job.value.id,
+    showMediaOverride.value
+      ? { media_url_override: mediaOverride.value }
+      : undefined
+  );
 }
 
 async function cancel() {
@@ -471,6 +491,13 @@ onBeforeUnmount(() => {
         >
       </p>
       <p v-if="job.error" class="error">{{ job.error }}</p>
+      <div v-if="showMediaOverride" class="field media-override">
+        <Label>媒体地址覆盖（m3u8/mp4）</Label>
+        <Input
+          v-model="mediaOverride"
+          placeholder="登录后从 Network 复制的流地址"
+        />
+      </div>
     </section>
 
     <section v-if="playerSrc" class="card">

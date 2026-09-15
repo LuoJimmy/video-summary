@@ -316,6 +316,177 @@ def test_create_job_and_list(client):
     assert listed["items"][0]["summary"] is None
 
 
+def test_retry_job_saves_media_override(client, db_session):
+    created = client.post(
+        "/api/jobs",
+        json={"source_url": "https://cdn.example.com/a.mp4", "title": "失败"},
+    ).json()
+    row = db_session.get(Job, created["id"])
+    row.status = "failed"
+    row.stage = "failed"
+    row.error = "无法解析媒体地址，请填写媒体地址覆盖后重试"
+    db_session.commit()
+    retried = client.post(
+        f"/api/jobs/{created['id']}/retry",
+        json={"media_url_override": "https://cdn.example.com/live.m3u8"},
+    ).json()
+    assert retried["status"] == "pending"
+    assert retried["media_url_override"] == "https://cdn.example.com/live.m3u8"
+    again = client.post(f"/api/jobs/{created['id']}/retry")
+    assert again.status_code == 200
+    assert again.json()["media_url_override"] == "https://cdn.example.com/live.m3u8"
+
+
+def test_preview_catalog_and_from_catalog(client, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app.services.ingest.base import CatalogItem, CatalogPage, CatalogRef
+
+    monkeypatch.setattr(
+        "app.routers.jobs.detect_catalog",
+        lambda url: CatalogRef("bilibili", "11430504", "B 站 UP 空间")
+        if "space.bilibili.com/11430504" in url
+        else None,
+    )
+
+    def fake_list(adapter_name, auth, catalog_id, since=None, cursor=None, limit=None):
+        assert adapter_name == "bilibili"
+        assert catalog_id == "11430504"
+        assert limit == 200
+        return CatalogPage(
+            items=[
+                CatalogItem(
+                    source_url="https://www.bilibili.com/video/BV1exist0001",
+                    title="已有",
+                    author="UP",
+                    created_at=datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc),
+                ),
+                CatalogItem(
+                    source_url="https://www.bilibili.com/video/BV1new000002",
+                    title="新稿",
+                    author="UP",
+                    created_at=datetime(2026, 8, 14, 4, 0, tzinfo=timezone.utc),
+                ),
+            ],
+            next_cursor="next-token",
+        )
+
+    monkeypatch.setattr("app.routers.jobs.list_catalog", fake_list)
+    client.post("/api/jobs", json={"source_url": "https://www.bilibili.com/video/BV1exist0001", "title": "旧"})
+    preview = client.post(
+        "/api/jobs/preview",
+        json={"source_url": "https://space.bilibili.com/11430504"},
+    ).json()
+    assert preview["catalog"] is True
+    assert preview["listed"] == 2
+    assert preview["existing"] == 1
+    assert preview["next_cursor"] == "next-token"
+    assert preview["items"][0]["exists"] is True
+    assert preview["items"][1]["exists"] is False
+
+    created = client.post(
+        "/api/jobs/from-catalog",
+        json={
+            "source_url": "https://space.bilibili.com/11430504",
+            "items": [
+                {
+                    "source_url": "https://www.bilibili.com/video/BV1new000002",
+                    "title": "新稿",
+                    "author": "UP",
+                    "created_at": "2026-08-14T04:00:00Z",
+                    "exists": False,
+                }
+            ],
+            "next_cursor": "next-token",
+            "catalog_label": "B 站 UP 空间",
+        },
+    ).json()
+    assert created["created"] == 1
+    assert created["skipped"] == 0
+    assert created["next_cursor"] == "next-token"
+    jobs = client.get("/api/jobs").json()["items"]
+    assert any(item["title"] == "新稿" for item in jobs)
+
+
+def test_preview_marks_xiaoe_short_link_as_existing(client, db_session, monkeypatch):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from app.services.ingest.base import CatalogItem, CatalogPage, CatalogRef
+
+    shanghai = ZoneInfo("Asia/Shanghai")
+    old_live = datetime(2026, 9, 10, 19, 30, tzinfo=shanghai)
+    db_session.add(
+        Job(
+            title="9.10行情梳理",
+            source_url="https://etrsz.xetslk.com/sl/3NFDU8",
+            source_created_at=old_live.astimezone(timezone.utc).replace(tzinfo=None),
+            status="done",
+            stage="done",
+        )
+    )
+    db_session.commit()
+
+    monkeypatch.setattr(
+        "app.routers.jobs.detect_catalog",
+        lambda url: CatalogRef("xiaoe", "appdemo", "小鹅通店铺") if "xiaoeknow.com" in url else None,
+    )
+
+    def fake_list(adapter_name, auth, catalog_id, since=None, cursor=None, limit=None):
+        assert adapter_name == "xiaoe"
+        return CatalogPage(
+            items=[
+                CatalogItem(
+                    source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo",
+                    title="9.10行情梳理",
+                    created_at=old_live.astimezone(timezone.utc),
+                ),
+                CatalogItem(
+                    source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_new?app_id=appdemo",
+                    title="9.15行情梳理",
+                    created_at=datetime(2026, 9, 15, 11, 30, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+
+    monkeypatch.setattr("app.routers.jobs.list_catalog", fake_list)
+    preview = client.post(
+        "/api/jobs/preview",
+        json={"source_url": "https://appdemo.mp.xiaoeknow.com"},
+    ).json()
+    assert preview["listed"] == 2
+    assert preview["existing"] == 1
+    by_title = {item["title"]: item["exists"] for item in preview["items"]}
+    assert by_title["9.10行情梳理"] is True
+    assert by_title["9.15行情梳理"] is False
+    assert preview["items"][0]["created_at"]
+
+
+def test_from_catalog_rejects_non_catalog(client):
+    resp = client.post(
+        "/api/jobs/from-catalog",
+        json={
+            "source_url": "https://www.bilibili.com/video/BV1a4awzsENn",
+            "items": [{"source_url": "https://www.bilibili.com/video/BV1a4awzsENn", "title": "单稿"}],
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_from_catalog_empty_items(client, monkeypatch):
+    from app.services.ingest.base import CatalogRef
+
+    monkeypatch.setattr(
+        "app.routers.jobs.detect_catalog",
+        lambda url: CatalogRef("bilibili", "1", "B 站 UP 空间"),
+    )
+    resp = client.post(
+        "/api/jobs/from-catalog",
+        json={"source_url": "https://space.bilibili.com/1", "items": []},
+    )
+    assert resp.status_code == 422
+
+
 def test_list_jobs_paginated(client):
     for index in range(3):
         client.post("/api/jobs", json={"source_url": f"https://cdn.example.com/{index}.mp4", "title": f"t{index}"})

@@ -1,10 +1,14 @@
+import base64
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import unquote, urlparse
 
 from app.services.authctx import RequestAuth
+
+CATALOG_BATCH_LIMIT = 200
 
 
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".ts"}
@@ -25,6 +29,47 @@ class CatalogItem:
     author: str = ""
     created_at: datetime | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CatalogRef:
+    adapter: str
+    catalog_id: str
+    label: str
+
+
+@dataclass
+class CatalogPage:
+    items: list[CatalogItem] = field(default_factory=list)
+    next_cursor: str = ""
+    truncated: bool = False
+    message: str = ""
+
+    def __iter__(self) -> Iterator[CatalogItem]:
+        return iter(self.items)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, index: int) -> CatalogItem:
+        return self.items[index]
+
+
+def encode_catalog_cursor(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_catalog_cursor(cursor: str | None) -> dict[str, Any]:
+    text = (cursor or "").strip()
+    if not text:
+        return {}
+    padded = text + "=" * (-len(text) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 @dataclass
@@ -56,8 +101,10 @@ class SiteAdapter:
         auth: RequestAuth,
         catalog_id: str,
         since: datetime | None = None,
-    ) -> list[CatalogItem]:
-        return []
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> CatalogPage:
+        return CatalogPage()
 
 
 def path_suffix(url: str) -> str:

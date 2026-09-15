@@ -104,6 +104,11 @@ class JobCreateIn(BaseModel):
     media_url_override: str = ""
     domain_id: str = ""
     summarize_document: bool = False
+    cursor: str = ""
+
+
+class JobRetryIn(BaseModel):
+    media_url_override: str | None = None
 
 
 class JobUpdateIn(BaseModel):
@@ -198,6 +203,14 @@ class JobMediaOut(BaseModel):
     message: str = ""
 
 
+class CatalogPreviewItem(BaseModel):
+    source_url: str
+    title: str = ""
+    author: str = ""
+    created_at: datetime | None = None
+    exists: bool = False
+
+
 class ResolvePreview(BaseModel):
     adapter: str
     title: str = ""
@@ -206,6 +219,29 @@ class ResolvePreview(BaseModel):
     needs_media_url: bool = False
     message: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
+    catalog: bool = False
+    catalog_label: str = ""
+    listed: int = 0
+    existing: int = 0
+    next_cursor: str = ""
+    truncated: bool = False
+    items: list[CatalogPreviewItem] = Field(default_factory=list)
+
+
+class JobCatalogIn(JobCreateIn):
+    items: list[CatalogPreviewItem] = Field(min_length=1, max_length=200)
+    next_cursor: str = ""
+    truncated: bool = False
+    catalog_label: str = ""
+
+
+class JobCatalogOut(BaseModel):
+    created: int = 0
+    skipped: int = 0
+    next_cursor: str = ""
+    truncated: bool = False
+    message: str = ""
+    catalog_label: str = ""
 
 
 class KnowledgeDoc(BaseModel):

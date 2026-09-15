@@ -19,6 +19,7 @@ export function sourceTypeLabel(sourceType: string | null | undefined): string {
     hls: "HLS",
     page: "页面",
     live: "直播",
+    catalog: "目录",
   };
   const raw = (sourceType || "").trim();
   return labels[raw] || raw || "未知类型";
@@ -75,4 +76,26 @@ export function parseSourceUrls(text: string): string[] {
     urls.push(url);
   }
   return urls;
+}
+
+export function isCatalogSourceUrl(url: string): boolean {
+  const text = (url || "").trim();
+  if (!text) return false;
+  if (/space\.bilibili\.com\/\d+/i.test(text) && !/\/video\/(?:BV|av)/i.test(text)) {
+    return true;
+  }
+  if (
+    /(?:xiaoeknow|xiaoe-tech|xetslk|xet\.tech|xed\.plus|xiaoet\.cn)/i.test(text) &&
+    !/\/course\/alive\//i.test(text)
+  ) {
+    return true;
+  }
+  if (/(?:yueniuzq|yueniusz)\.com/i.test(text) && !/[?&]id=/.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+export function needsMediaOverrideError(error?: string | null): boolean {
+  return (error || "").includes("媒体地址覆盖");
 }

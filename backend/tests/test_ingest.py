@@ -388,6 +388,9 @@ def test_parse_xiaoe_and_bilibili_catalog_id():
 def test_xiaoe_list_catalog_skips_upcoming():
     from app.services.ingest.xiaoe import XiaoeAdapter
 
+    respx.get("https://appdemo.h5.xiaoeknow.com/p/decorate/homepage").mock(
+        return_value=Response(200, text="<html></html>")
+    )
     respx.get("https://appdemo.h5.xiaoeknow.com/_alive/v2/list").mock(
         return_value=Response(
             200,
@@ -422,6 +425,88 @@ def test_xiaoe_list_catalog_skips_upcoming():
 
 
 @respx.mock
+def test_xiaoe_list_catalog_from_shop_homepage():
+    import base64
+    import json
+
+    from app.services.ingest.xiaoe import XiaoeAdapter
+
+    blob = base64.urlsafe_b64encode(
+        json.dumps(
+            {"id": "search_bar", "channel_id": "", "component_id": 38901192},
+            separators=(",", ":"),
+        ).encode()
+    ).decode().rstrip("=")
+    respx.get("https://appdemo.h5.xiaoeknow.com/p/decorate/homepage").mock(
+        return_value=Response(
+            200,
+            text=(
+                '<html>"appdemo","6442073",5,"店铺主页",38901192,"搜索"'
+                f"/p/decorate/more/{blob}</html>"
+            ),
+        )
+    )
+    respx.post("https://appdemo.h5.xiaoeknow.com/xe.micro_page.h5_more/1.0.0").mock(
+        return_value=Response(
+            200,
+            json={
+                "code": 0,
+                "msg": "success",
+                "data": {
+                    "component": {
+                        "component_type": "alive",
+                        "list": [
+                            {
+                                "spu_id": "l_new",
+                                "type": 4,
+                                "title": "9.15行情梳理",
+                                "src_type": "alive",
+                                "lesson_start_at": "2026-09-15 19:30:00",
+                            }
+                        ],
+                    },
+                    "finished": False,
+                    "page_num": 1,
+                    "last_id": "0_1_0",
+                },
+            },
+        )
+    )
+    items = XiaoeAdapter().list_catalog(
+        RequestAuth(), "https://appdemo.mp.xiaoeknow.com"
+    )
+    assert [item.title for item in items] == ["9.15行情梳理"]
+    assert items[0].source_url == (
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_new?app_id=appdemo"
+    )
+    assert items[0].created_at is not None
+    local = items[0].created_at.astimezone(ZoneInfo("Asia/Shanghai"))
+    assert (local.year, local.month, local.day, local.hour) == (2026, 9, 15, 19)
+
+
+@respx.mock
+def test_xiaoe_list_catalog_login_error_mentions_cookie():
+    from app.services.ingest.base import CatalogError
+    from app.services.ingest.xiaoe import XiaoeAdapter, XIAOE_LOGIN_HINT
+
+    respx.get("https://appdemo.h5.xiaoeknow.com/p/decorate/homepage").mock(
+        return_value=Response(200, text="<html></html>")
+    )
+    respx.get("https://appdemo.h5.xiaoeknow.com/_alive/v2/list").mock(
+        return_value=Response(
+            200,
+            json={"code": 11302, "message": "Redirect.auth.login", "data": {}},
+        )
+    )
+    try:
+        XiaoeAdapter().list_catalog(RequestAuth(), "appdemo")
+    except CatalogError as exc:
+        assert str(exc) == XIAOE_LOGIN_HINT
+    else:
+        raise AssertionError("expected CatalogError")
+
+
+@respx.mock
 def test_yueniu_list_catalog_requires_cookie():
     from app.services.ingest.base import CatalogError
     from app.services.ingest.yueniu import YueniuAdapter
@@ -432,32 +517,75 @@ def test_yueniu_list_catalog_requires_cookie():
     except CatalogError as exc:
         assert "Cookie" in str(exc)
 
+    respx.get("https://jf.yueniuzq.com/islogin.json").mock(
+        return_value=Response(200, json={"success": True, "pptId": "u1"})
+    )
     respx.get("https://jf.yueniuzq.com/headGetUserInfo.json").mock(
         return_value=Response(200, json={"muser_webUserId": "u1"})
     )
-    respx.get("https://jflive.yueniuzq.com/api/live/pageList").mock(
+    respx.get("https://jf.yueniuzq.com/api/live/columnList").mock(
         return_value=Response(
             200,
             json={
                 "code": 0,
                 "result": {
-                    "records": [
+                    "list": [
                         {
-                            "id": "3f14baab82b61eaf6d47deab521b6f7e",
-                            "liveName": "早盘直播",
-                            "startTs": int(datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc).timestamp()),
+                            "columnId": "col1",
+                            "columnName": "盘面课",
+                            "authorName": "加菲",
                             "authorId": "author1",
-                            "user": {"name": "加菲"},
                         }
                     ]
                 },
             },
         )
     )
+    respx.get("https://jf.yueniuzq.com/api/live/V2/liveList").mock(
+        return_value=Response(
+            200,
+            json={
+                "code": 0,
+                "result": {
+                    "list": [
+                        {
+                            "liveId": "3f14baab82b61eaf6d47deab521b6f7e",
+                            "liveName": "早盘直播",
+                            "status": 3,
+                            "date": "2026-08-13 12:00:00",
+                            "authorName": "加菲",
+                        },
+                        {
+                            "liveId": "upcoming",
+                            "liveName": "未开播",
+                            "status": 4,
+                            "date": "2026-09-20 12:00:00",
+                        },
+                    ]
+                },
+            },
+        )
+    )
     items = YueniuAdapter().list_catalog(RequestAuth(cookie="_xx_ppt_token=abc"), "")
+    assert [item.title for item in items] == ["早盘直播"]
     assert items[0].source_url.endswith("id=3f14baab82b61eaf6d47deab521b6f7e")
-    assert items[0].title == "早盘直播"
     assert items[0].author == "加菲"
+    assert items[0].created_at is not None
+
+
+@respx.mock
+def test_yueniu_list_catalog_empty_without_login():
+    from app.services.ingest.base import CatalogError
+    from app.services.ingest.yueniu import YueniuAdapter
+
+    respx.get("https://jf.yueniuzq.com/islogin.json").mock(
+        return_value=Response(200, json={"success": False, "message": "logout"})
+    )
+    try:
+        YueniuAdapter().list_catalog(RequestAuth(cookie="_xx_ppt_token=abc"), "")
+        raise AssertionError("未登录应提示 Cookie")
+    except CatalogError as exc:
+        assert "登录" in str(exc)
 
 
 @respx.mock
@@ -577,3 +705,127 @@ def test_bilibili_list_catalog_prefers_wbi_search():
     items = BilibiliAdapter().list_catalog(RequestAuth(), "11430504")
     assert items[0].title == "WBI稿件"
     assert items[0].source_url == "https://www.bilibili.com/video/BV1a4awzsENn"
+
+
+def test_detect_catalog_urls():
+    from app.services.ingest.registry import detect_catalog
+
+    bili = detect_catalog("https://space.bilibili.com/11430504/video")
+    assert bili is not None
+    assert bili.adapter == "bilibili"
+    assert bili.catalog_id == "11430504"
+    assert detect_catalog("https://www.bilibili.com/video/BV1a4awzsENn") is None
+
+    shop = detect_catalog("https://appdemo.h5.xiaoeknow.com/")
+    assert shop is not None
+    assert shop.adapter == "xiaoe"
+    assert shop.catalog_id == "appdemo"
+    mp_shop = detect_catalog("https://appdtbqcmlu9560.mp.xiaoeknow.com")
+    assert mp_shop is not None
+    assert mp_shop.adapter == "xiaoe"
+    assert mp_shop.catalog_id == "appdtbqcmlu9560"
+    assert detect_catalog("https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_abc?app_id=appdemo") is None
+
+    site = detect_catalog("https://jf.yueniuzq.com/living/")
+    assert site is not None
+    assert site.adapter == "yueniu"
+    assert detect_catalog("https://jf.yueniuzq.com/living/?id=abc") is None
+
+
+@respx.mock
+def test_xiaoe_list_catalog_cursor_second_batch():
+    from app.services.ingest.xiaoe import XiaoeAdapter
+
+    respx.get("https://appdemo.h5.xiaoeknow.com/p/decorate/homepage").mock(
+        return_value=Response(200, text="<html></html>")
+    )
+
+    def handler(request):
+        page = int(request.url.params.get("page") or 1)
+        if page == 1:
+            rows = [
+                {"id": f"l_{index}", "title": f"课{index}", "alive_state": 3, "zb_start_at": "2026-08-13 20:00:00"}
+                for index in range(20)
+            ]
+        elif page == 2:
+            rows = [
+                {"id": "l_next", "title": "第二页", "alive_state": 3, "zb_start_at": "2026-08-12 20:00:00"}
+            ]
+        else:
+            rows = []
+        return Response(200, json={"code": 0, "data": {"list": rows}})
+
+    respx.get("https://appdemo.h5.xiaoeknow.com/_alive/v2/list").mock(side_effect=handler)
+    first = XiaoeAdapter().list_catalog(RequestAuth(cookie="sid=1"), "appdemo", limit=20)
+    assert len(first.items) == 20
+    assert first.next_cursor
+    second = XiaoeAdapter().list_catalog(
+        RequestAuth(cookie="sid=1"), "appdemo", cursor=first.next_cursor, limit=20
+    )
+    assert [item.title for item in second.items] == ["第二页"]
+    assert not second.next_cursor
+
+
+@respx.mock
+def test_bilibili_list_catalog_cursor_and_tid(monkeypatch):
+    from app.services.ingest.bilibili import BilibiliAdapter
+
+    monkeypatch.setattr("app.services.ingest.bilibili.PAGE_PAUSE", 0)
+    monkeypatch.setattr("app.services.ingest.bilibili.RETRY_BACKOFF", ())
+    monkeypatch.setattr("app.services.ingest.bilibili.SPACE_PN_CAP", 1)
+
+    def handler(request):
+        pn = int(request.url.params.get("pn") or 1)
+        tid = request.url.params.get("tid") or "0"
+        if tid == "0":
+            vlist = [
+                {
+                    "bvid": f"BV{index:010d}",
+                    "title": f"稿件{index}",
+                    "author": "UP",
+                    "created": 1700000000,
+                }
+                for index in range(30)
+            ]
+            return Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "list": {
+                            "vlist": vlist,
+                            "tlist": {"160": {"tid": 160, "count": 1, "name": "生活"}},
+                        }
+                    },
+                },
+            )
+        return Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "list": {
+                        "vlist": [
+                            {
+                                "bvid": "BV9999999999",
+                                "title": "分区稿件",
+                                "author": "UP",
+                                "created": 1690000000,
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+
+    respx.get("https://api.bilibili.com/x/space/arc/search").mock(side_effect=handler)
+    first = BilibiliAdapter().list_catalog(RequestAuth(), "11430504", limit=20)
+    assert len(first.items) == 20
+    assert first.next_cursor
+    second = BilibiliAdapter().list_catalog(
+        RequestAuth(), "11430504", cursor=first.next_cursor, limit=200
+    )
+    titles = [item.title for item in second.items]
+    assert "稿件20" in titles
+    assert "分区稿件" in titles
+    assert "稿件0" not in titles

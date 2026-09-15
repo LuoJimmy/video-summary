@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   documentPreviewKind,
+  isCatalogSourceUrl,
   isDocumentSource,
   locatorPage,
+  needsMediaOverrideError,
   parseSourceUrls,
   publicSourceUrl,
   sourceTypeLabel,
@@ -49,5 +51,30 @@ describe("source helpers", () => {
       "https://cdn.example.com/b.mp4",
     ]);
     expect(parseSourceUrls("   \n  ")).toEqual([]);
+  });
+
+  it("识别空间店铺站点目录地址", () => {
+    expect(isCatalogSourceUrl("https://space.bilibili.com/11430504")).toBe(true);
+    expect(isCatalogSourceUrl("https://www.bilibili.com/video/BV1a4awzsENn")).toBe(
+      false
+    );
+    expect(isCatalogSourceUrl("https://appdemo.h5.xiaoeknow.com/")).toBe(true);
+    expect(
+      isCatalogSourceUrl(
+        "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_abc?app_id=appdemo"
+      )
+    ).toBe(false);
+    expect(isCatalogSourceUrl("https://jf.yueniuzq.com/living/")).toBe(true);
+    expect(
+      isCatalogSourceUrl("https://jf.yueniuzq.com/living/?id=abc")
+    ).toBe(false);
+  });
+
+  it("识别需要补流地址的解析失败", () => {
+    expect(
+      needsMediaOverrideError("无法解析媒体地址，请填写媒体地址覆盖后重试")
+    ).toBe(true);
+    expect(needsMediaOverrideError("转写失败")).toBe(false);
+    expect(needsMediaOverrideError("")).toBe(false);
   });
 });

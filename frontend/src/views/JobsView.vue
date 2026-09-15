@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowDown, ArrowUp, Info, Upload, X } from "@lucide/vue";
+import { ArrowDown, ArrowUp, Info, Loader2, Upload, X } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -15,14 +15,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { api, type Job, type ResolvePreview, type Site } from "../api";
+import { api, type CatalogPreviewItem, type Job, type JobCatalogResult, type ResolvePreview, type Site } from "../api";
 import type { DomainPack } from "../utils/domain";
 import { emptyDomainPack } from "../utils/domain";
 import {
+  isCatalogSourceUrl,
+  needsMediaOverrideError,
   parseSourceUrls,
   publicSourceUrl,
   SOURCE_URL_BATCH_LIMIT,
 } from "../utils/source";
+import CatalogImportDialog from "../components/CatalogImportDialog.vue";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
 import JobTitleEditor from "../components/JobTitleEditor.vue";
 import Pagination from "../components/Pagination.vue";
@@ -60,10 +63,29 @@ const siteId = ref("");
 const domainId = ref("a-share");
 const domainPresets = ref<DomainPack[]>([emptyDomainPack()]);
 const preview = ref<ResolvePreview | null>(null);
+const catalogOpen = ref(false);
+const catalogContinuing = ref(false);
+const catalogPreview = ref<ResolvePreview | null>(null);
+const catalogSourceUrl = ref("");
+const catalogResume = ref<{
+  sourceUrl: string;
+  cursor: string;
+  label: string;
+} | null>(null);
+let catalogWait: ((items: CatalogPreviewItem[] | null) => void) | null = null;
 const files = ref<File[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const summarizeDocument = ref(false);
 const creating = ref(false);
+type ListingAction = "create" | "continue";
+const listing = ref<ListingAction | null>(null);
+const jobBusy = computed(() => creating.value || Boolean(listing.value));
+const showMediaOverride = computed(
+  () =>
+    Boolean(mediaOverride.value.trim()) ||
+    jobs.value.some((job) => needsMediaOverrideError(job.error))
+);
+const catalogSubmitting = ref(false);
 const batchBusy = ref(false);
 const selectedIds = ref<Set<string>>(new Set());
 const deleting = ref<{ title: string; ids: string[] } | null>(null);
@@ -408,18 +430,142 @@ async function batchRetry() {
   }
 }
 
-async function doPreview() {
-  const urls = sourceUrls.value;
-  if (!urls.length && !mediaOverride.value.trim()) {
-    toast.error("请提供页面地址或媒体地址");
-    return;
-  }
-  preview.value = await api.preview({
-    source_url: urls[0] || "",
-    media_url_override: urls.length > 1 ? "" : mediaOverride.value,
-    site_id: siteId.value || null,
+function closeCatalogDialog() {
+  catalogOpen.value = false;
+  catalogWait?.(null);
+  catalogWait = null;
+}
+
+function confirmCatalogDialog(items: CatalogPreviewItem[]) {
+  catalogOpen.value = false;
+  catalogWait?.(items);
+  catalogWait = null;
+}
+
+function askCatalogConfirm(
+  listed: ResolvePreview,
+  url: string,
+  continuing: boolean
+): Promise<CatalogPreviewItem[] | null> {
+  catalogPreview.value = listed;
+  catalogSourceUrl.value = url;
+  catalogContinuing.value = continuing;
+  catalogOpen.value = true;
+  return new Promise((resolve) => {
+    catalogWait = resolve;
   });
 }
+
+function applyCatalogResult(result: JobCatalogResult, url: string) {
+  preview.value = {
+    adapter: preview.value?.adapter || "",
+    title: result.catalog_label,
+    source_type: "catalog",
+    media_url: "",
+    needs_media_url: false,
+    message: result.message,
+    catalog: true,
+    catalog_label: result.catalog_label,
+  };
+  if (result.next_cursor) {
+    catalogResume.value = {
+      sourceUrl: url,
+      cursor: result.next_cursor,
+      label: result.catalog_label,
+    };
+    toast.warning(
+      result.message || "已创建任务。创建区可继续拉取下一批。"
+    );
+    return;
+  }
+  catalogResume.value = null;
+  if (result.truncated) {
+    toast.warning(result.message || "已创建任务，更早内容无法继续自动拉取。");
+    return;
+  }
+  toast.success(result.message || `已创建 ${result.created} 个任务，目录已拉完。`);
+}
+
+async function importCatalog(
+  url: string,
+  continuing: boolean,
+  action: ListingAction = "create"
+) {
+  listing.value = action;
+  let listed: ResolvePreview;
+  try {
+    listed = await api.preview({
+      source_url: url,
+      site_id: siteId.value || null,
+      cursor: continuing ? catalogResume.value?.cursor || "" : "",
+    });
+  } finally {
+    listing.value = null;
+  }
+  preview.value = listed;
+  if (!listed.catalog) {
+    toast.error("不是可展开的空间/店铺/站点地址");
+    return false;
+  }
+  if (!listed.items?.length) {
+    toast.error(listed.message || "没有可拉取的视频");
+    if (listed.truncated) {
+      catalogResume.value = listed.next_cursor
+        ? { sourceUrl: url, cursor: listed.next_cursor, label: listed.catalog_label || "" }
+        : catalogResume.value;
+    }
+    return false;
+  }
+  const picked = await askCatalogConfirm(listed, url, continuing);
+  if (!picked) return false;
+  catalogSubmitting.value = true;
+  try {
+    const result = await api.fromCatalog({
+      source_url: url,
+      author: author.value,
+      site_id: siteId.value || null,
+      domain_id: domainId.value || "a-share",
+      items: picked,
+      next_cursor: listed.next_cursor || "",
+      truncated: listed.truncated || false,
+      catalog_label: listed.catalog_label || "",
+    });
+    applyCatalogResult(result, url);
+    await loadJobs();
+    return true;
+  } finally {
+    catalogSubmitting.value = false;
+  }
+}
+
+async function continueCatalog() {
+  if (!catalogResume.value || jobBusy.value) return;
+  try {
+    await importCatalog(catalogResume.value.sourceUrl, true, "continue");
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "继续拉取失败");
+  }
+}
+
+function endCatalogResume() {
+  catalogResume.value = null;
+  preview.value = {
+    adapter: "",
+    title: "",
+    source_type: "",
+    media_url: "",
+    needs_media_url: false,
+    message: "已结束本次拉取，已创建的任务会继续处理。",
+  };
+}
+
+watch(sourceUrl, () => {
+  catalogResume.value = null;
+});
+
+watch(createTab, (tab) => {
+  if (tab === "local") catalogResume.value = null;
+});
 
 async function finishCreated(created: Job[], failed: number, verb: string) {
   if (created.length === 1 && failed === 0) {
@@ -452,12 +598,22 @@ async function createFromUrl() {
     toast.error("批量创建时请先清空媒体地址覆盖");
     return;
   }
-  if (creating.value) return;
+  if (jobBusy.value) return;
   creating.value = true;
   const created: Job[] = [];
   let failed = 0;
+  let importedCatalog = false;
   try {
     for (const url of urls) {
+      if (isCatalogSourceUrl(url)) {
+        try {
+          importedCatalog = (await importCatalog(url, false)) || importedCatalog;
+        } catch (err) {
+          failed += 1;
+          toast.error(err instanceof Error ? err.message : "拉取目录失败");
+        }
+        continue;
+      }
       try {
         created.push(
           await api.createJob({
@@ -477,6 +633,7 @@ async function createFromUrl() {
         }
       }
     }
+    if (importedCatalog) return;
     if (urls.length === 1) {
       if (created[0]) await router.push(`/jobs/${created[0].id}`);
       return;
@@ -494,7 +651,7 @@ async function createFromFile() {
     toast.error(`一次最多创建 ${SOURCE_URL_BATCH_LIMIT} 个任务`);
     return;
   }
-  if (creating.value) return;
+  if (jobBusy.value) return;
   creating.value = true;
   const created: Job[] = [];
   let failed = 0;
@@ -637,11 +794,11 @@ onBeforeUnmount(() => {
         <Textarea
           v-model="sourceUrl"
           rows="3"
-          placeholder="每行一个地址，例如 https://www.bilibili.com/video/BV1a4awzsENn"
+          placeholder="每行一个地址。支持视频页、B 站空间、小鹅通店铺、约牛首页"
         />
       </div>
       <div class="grid two">
-        <div class="field field-lg">
+        <div v-if="showMediaOverride" class="field field-lg">
           <Label>媒体地址覆盖（m3u8/mp4，可选）</Label>
           <Input
             v-model="mediaOverride"
@@ -786,23 +943,58 @@ onBeforeUnmount(() => {
     </div>
     <div v-show="createTab === 'online'" class="row mt-4">
       <Button
+        v-if="!catalogResume"
+        type="button"
+        :disabled="jobBusy"
+        :aria-busy="listing === 'create'"
+        @click="createFromUrl"
+      >
+        <Loader2 v-if="listing === 'create'" class="size-4 animate-spin" />
+        {{ listing === "create" ? "解析中…" : "开始转写总结" }}
+      </Button>
+      <Button
+        v-if="catalogResume"
+        type="button"
+        :disabled="jobBusy"
+        :aria-busy="listing === 'continue'"
+        @click="continueCatalog"
+      >
+        <Loader2 v-if="listing === 'continue'" class="size-4 animate-spin" />
+        {{ listing === "continue" ? "拉取中…" : "继续拉取下一批" }}
+      </Button>
+      <Button
+        v-if="catalogResume"
         variant="outline"
         type="button"
-        :disabled="creating"
-        @click="doPreview"
-        >预解析</Button
-      >
-      <Button type="button" :disabled="creating" @click="createFromUrl"
-        >开始转写总结</Button
+        :disabled="jobBusy"
+        @click="endCatalogResume"
+        >结束本次拉取</Button
       >
     </div>
-    <p v-if="preview && createTab === 'online'" class="msg mt-3">
-      适配器 {{ preview.adapter }} / {{ preview.source_type }}
-      <br />
-      {{ preview.message || preview.media_url || "已解析到媒体地址" }}
+    <p v-if="catalogResume && createTab === 'online'" class="msg mt-3">
+      {{
+        preview?.message ||
+        `该${catalogResume.label}还有后续内容。`
+      }}
+    </p>
+    <p
+      v-else-if="preview && createTab === 'online'"
+      class="msg mt-3"
+    >
+      <template v-if="preview.catalog">
+        识别为 {{ preview.catalog_label }}，本批 {{ preview.listed }} 条，已存在
+        {{ preview.existing }} 条将跳过。
+        <br />
+        {{ preview.message }}
+      </template>
+      <template v-else>
+        适配器 {{ preview.adapter }} / {{ preview.source_type }}
+        <br />
+        {{ preview.message || preview.media_url || "已解析到媒体地址" }}
+      </template>
     </p>
     <div v-show="createTab === 'local'" class="row mt-4">
-      <Button type="button" :disabled="creating" @click="createFromFile"
+      <Button type="button" :disabled="jobBusy" @click="createFromFile"
         >上传并处理</Button
       >
     </div>
@@ -978,6 +1170,19 @@ onBeforeUnmount(() => {
     />
   </section>
 
+  <CatalogImportDialog
+    :open="catalogOpen"
+    :continuing="catalogContinuing"
+    :catalog-label="catalogPreview?.catalog_label || ''"
+    :listed="catalogPreview?.listed || 0"
+    :items="catalogPreview?.items || []"
+    :next-cursor="catalogPreview?.next_cursor || ''"
+    :truncated="catalogPreview?.truncated || false"
+    :message="catalogPreview?.message || ''"
+    :busy="catalogSubmitting"
+    @close="closeCatalogDialog"
+    @confirm="confirmCatalogDialog"
+  />
   <JobDeleteDialog
     :open="Boolean(deleting)"
     :title="deleting?.title || ''"

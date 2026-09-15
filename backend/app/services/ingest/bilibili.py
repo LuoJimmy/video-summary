@@ -9,7 +9,17 @@ import httpx
 
 from app.services.authctx import RequestAuth, http_headers
 from app.services.httpclient import http_client
-from app.services.ingest.base import CatalogError, CatalogItem, ResolvedMedia, SiteAdapter, classify_direct_url
+from app.services.ingest.base import (
+    CatalogError,
+    CatalogItem,
+    CatalogPage,
+    CatalogRef,
+    ResolvedMedia,
+    SiteAdapter,
+    classify_direct_url,
+    decode_catalog_cursor,
+    encode_catalog_cursor,
+)
 from app.services.sourceauthor import normalize_author
 from app.services.sourcetime import pick_source_datetime
 
@@ -26,6 +36,9 @@ MID_RE = re.compile(r"space\.bilibili\.com/(\d+)", re.I)
 PAGE_PAUSE = 0.8
 RETRY_BACKOFF = (2.0, 5.0, 10.0)
 MAX_SPACE_PAGES = 3
+SPACE_PAGE_SIZE = 30
+SPACE_PN_CAP = 1000 // SPACE_PAGE_SIZE
+BILI_WALL_MESSAGE = "已列出最近稿件（B 站空间接口上限），更早稿件无法自动拉取，可手动粘贴视频地址。"
 RATE_LIMIT_CODES = {-799, -412, 412, -352, -509}
 RATE_LIMIT_STATUSES = {412, 429, 503}
 WBI_MIXIN_INDEX = (
@@ -82,6 +95,18 @@ def parse_bilibili_mid(catalog_id: str) -> str:
     query = parse_qs(urlparse(text).query)
     mid = (query.get("mid") or [""])[0].strip()
     return mid if mid.isdigit() else ""
+
+
+def detect_bilibili_catalog(url: str) -> CatalogRef | None:
+    text = (url or "").strip()
+    if not text or not MID_RE.search(text):
+        return None
+    if BVID_RE.search(text) or AV_RE.search(urlparse(text).path):
+        return None
+    mid = parse_bilibili_mid(text)
+    if not mid:
+        return None
+    return CatalogRef("bilibili", mid, "B 站 UP 空间")
 
 
 def _https(url: str) -> str:
@@ -358,7 +383,9 @@ class BilibiliAdapter(SiteAdapter):
         auth: RequestAuth,
         catalog_id: str,
         since: datetime | None = None,
-    ) -> list[CatalogItem]:
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> CatalogPage:
         from app.services.sourcetime import ensure_utc
 
         mid = parse_bilibili_mid(catalog_id)
@@ -367,58 +394,128 @@ class BilibiliAdapter(SiteAdapter):
         headers = http_headers(auth)
         headers.setdefault("Referer", "https://www.bilibili.com")
         headers.setdefault("Origin", "https://www.bilibili.com")
+        state = decode_catalog_cursor(cursor)
+        pn = max(1, int(state.get("pn") or 1))
+        tid = int(state.get("tid") or 0)
+        pending_tids = [int(item) for item in (state.get("tids") or []) if str(item).isdigit() or isinstance(item, int)]
+        seen = {str(item) for item in (state.get("seen") or []) if item}
+        has_tids = bool(state.get("tids") is not None or tid)
         items: list[CatalogItem] = []
+        truncated = False
+        message = ""
+        schedule = limit is None
+        pages_fetched = 0
         try:
             with http_client(follow_redirects=True, headers=headers) as client:
                 wbi_keys = _wbi_keys(client)
-                for page in range(1, MAX_SPACE_PAGES + 1):
-                    if page > 1 and PAGE_PAUSE:
+                while True:
+                    if schedule and pages_fetched >= MAX_SPACE_PAGES:
+                        break
+                    if pages_fetched and PAGE_PAUSE:
                         time.sleep(PAGE_PAUSE)
-                    payload, limited = _fetch_space_page(client, mid, page, wbi_keys)
+                    payload, limited = _fetch_space_page(client, mid, pn, wbi_keys, tid=tid)
+                    pages_fetched += 1
                     if limited:
                         if items:
-                            break
+                            truncated = True
+                            message = "稿件列表被限流，已保留已拉到的条目；稍后可继续。"
+                            next_cursor = encode_catalog_cursor(
+                                {"pn": pn, "tid": tid, "tids": pending_tids, "seen": sorted(seen)}
+                            )
+                            return CatalogPage(
+                                items=items,
+                                next_cursor=next_cursor,
+                                truncated=True,
+                                message=message,
+                            )
                         raise CatalogError("稿件列表被限流，请等几分钟再试")
                     if payload.get("code") != 0:
                         raise CatalogError(str(payload.get("message") or "B站稿件列表接口失败"))
                     data = payload.get("data") or {}
                     listing = data.get("list") or {}
                     rows = listing.get("vlist") if isinstance(listing, dict) else listing
+                    if isinstance(listing, dict) and not has_tids:
+                        pending_tids = _tids_from_listing(listing)
+                        has_tids = True
                     if not rows:
-                        break
+                        if schedule or not pending_tids:
+                            break
+                        tid, pending_tids, pn, pages_fetched = pending_tids[0], pending_tids[1:], 1, 0
+                        continue
                     reached_since = False
+                    converted: list[CatalogItem] = []
                     for row in rows:
                         if not isinstance(row, dict):
                             continue
                         bvid = str(row.get("bvid") or "").strip()
-                        if not bvid:
+                        if not bvid or bvid in seen:
                             continue
                         created_at = pick_source_datetime(row.get("created"), row.get("pubdate"), row)
                         if since is not None and created_at is not None and ensure_utc(created_at) < ensure_utc(since):
                             reached_since = True
                             continue
-                        items.append(
+                        converted.append(
                             CatalogItem(
                                 source_url=f"https://www.bilibili.com/video/{bvid}",
                                 title=str(row.get("title") or "B站视频"),
                                 author=normalize_author(row.get("author")),
                                 created_at=created_at,
-                                extra={"bvid": bvid, "mid": mid, "aid": row.get("aid")},
+                                extra={"bvid": bvid, "mid": mid, "aid": row.get("aid"), "tid": tid},
                             )
                         )
-                    if len(rows) < 30 or reached_since:
-                        break
+                    if limit is not None:
+                        room = max(0, limit - len(items))
+                        if len(converted) > room:
+                            converted = converted[:room]
+                            for item in converted:
+                                seen.add(str((item.extra or {}).get("bvid") or ""))
+                            items.extend(converted)
+                            return CatalogPage(
+                                items=items,
+                                next_cursor=encode_catalog_cursor(
+                                    {"pn": pn, "tid": tid, "tids": pending_tids, "seen": sorted(seen)}
+                                ),
+                            )
+                    for item in converted:
+                        seen.add(str((item.extra or {}).get("bvid") or ""))
+                    items.extend(converted)
+                    if reached_since or len(rows) < SPACE_PAGE_SIZE:
+                        if schedule or not pending_tids:
+                            break
+                        tid, pending_tids, pn, pages_fetched = pending_tids[0], pending_tids[1:], 1, 0
+                        continue
+                    if pn >= SPACE_PN_CAP:
+                        if schedule:
+                            break
+                        if not pending_tids:
+                            return CatalogPage(
+                                items=items,
+                                truncated=True,
+                                message=BILI_WALL_MESSAGE,
+                            )
+                        tid, pending_tids, pn, pages_fetched = pending_tids[0], pending_tids[1:], 1, 0
+                        continue
+                    pn += 1
+                    if limit is not None and len(items) >= limit:
+                        return CatalogPage(
+                            items=items,
+                            next_cursor=encode_catalog_cursor(
+                                {"pn": pn, "tid": tid, "tids": pending_tids, "seen": sorted(seen)}
+                            ),
+                        )
         except CatalogError:
             raise
         except (httpx.HTTPError, ValueError, KeyError, json.JSONDecodeError) as exc:
             if items:
-                return items
+                return CatalogPage(items=items, truncated=True, message=str(exc))
             raise CatalogError(f"B站稿件列表请求失败：{exc}") from exc
-        return items
+        return CatalogPage(items=items, truncated=truncated, message=message)
 
 
-def _space_endpoints(mid: str, page: int, wbi_keys: tuple[str, str] | None) -> list[tuple[str, dict]]:
-    params = {"mid": mid, "pn": page, "ps": 30, "order": "pubdate"}
+def _space_endpoints(mid: str, page: int, wbi_keys: tuple[str, str] | None, tid: int = 0) -> list[tuple[str, dict]]:
+    params = {"mid": mid, "pn": page, "ps": SPACE_PAGE_SIZE, "order": "pubdate"}
+    if tid:
+        params["tid"] = tid
     endpoints: list[tuple[str, dict]] = []
     if wbi_keys:
         signed = sign_wbi({**params, "platform": "web"}, wbi_keys[0], wbi_keys[1])
@@ -437,17 +534,34 @@ def _read_payload(response: httpx.Response) -> dict:
     return {}
 
 
+def _tids_from_listing(listing: dict) -> list[int]:
+    tlist = listing.get("tlist") or {}
+    if not isinstance(tlist, dict):
+        return []
+    tids: list[int] = []
+    for key, value in tlist.items():
+        raw = value.get("tid") if isinstance(value, dict) else key
+        try:
+            tid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if tid and tid not in tids:
+            tids.append(tid)
+    return tids
+
+
 def _fetch_space_page(
     client: httpx.Client,
     mid: str,
     page: int,
     wbi_keys: tuple[str, str] | None,
+    tid: int = 0,
 ) -> tuple[dict, bool]:
     last_payload: dict = {}
     retries = max(1, len(RETRY_BACKOFF) + 1)
     for attempt in range(retries):
         limited = False
-        for url, params in _space_endpoints(mid, page, wbi_keys):
+        for url, params in _space_endpoints(mid, page, wbi_keys, tid=tid):
             response = client.get(url, params=params)
             payload = _read_payload(response)
             message = str(payload.get("message") or "")

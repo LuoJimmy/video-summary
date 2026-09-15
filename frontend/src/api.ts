@@ -119,6 +119,14 @@ export type JobBatchResult = {
   failed: Array<{ id: string; reason: string }>;
 };
 
+export type CatalogPreviewItem = {
+  source_url: string;
+  title: string;
+  author: string;
+  created_at: string | null;
+  exists: boolean;
+};
+
 export type ResolvePreview = {
   adapter: string;
   title: string;
@@ -126,6 +134,23 @@ export type ResolvePreview = {
   media_url: string;
   needs_media_url: boolean;
   message: string;
+  extra?: Record<string, unknown>;
+  catalog?: boolean;
+  catalog_label?: string;
+  listed?: number;
+  existing?: number;
+  next_cursor?: string;
+  truncated?: boolean;
+  items?: CatalogPreviewItem[];
+};
+
+export type JobCatalogResult = {
+  created: number;
+  skipped: number;
+  next_cursor: string;
+  truncated: boolean;
+  message: string;
+  catalog_label: string;
 };
 
 export type KnowledgeDoc = {
@@ -355,6 +380,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  fromCatalog: (payload: Record<string, unknown>) =>
+    request<JobCatalogResult>("/api/jobs/from-catalog", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   uploadJob: (
     file: File,
     title: string,
@@ -372,8 +402,11 @@ export const api = {
       body.append("source_created_at", String(file.lastModified));
     return request<Job>("/api/jobs/upload", { method: "POST", body });
   },
-  retryJob: (id: string) =>
-    request<Job>(`/api/jobs/${id}/retry`, { method: "POST" }),
+  retryJob: (id: string, payload?: { media_url_override?: string }) =>
+    request<Job>(`/api/jobs/${id}/retry`, {
+      method: "POST",
+      body: payload ? JSON.stringify(payload) : undefined,
+    }),
   cancelJob: (id: string) =>
     request<Job>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   deleteJob: (id: string) =>

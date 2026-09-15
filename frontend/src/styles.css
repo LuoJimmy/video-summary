@@ -1815,3 +1815,140 @@ label.check small {
     height: 2.75rem;
   }
 }
+
+.catalog-import-dialog {
+  max-height: min(90vh, 52rem);
+  overflow: auto;
+}
+.catalog-import-filters {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.catalog-import-filters .field-title {
+  flex: 0 1 22rem;
+  min-width: 8rem;
+  max-width: 24rem;
+}
+.catalog-import-filters .field-dates {
+  flex: 0 0 auto;
+}
+.catalog-import-filters .date-range {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.catalog-import-filters .date-range [data-slot="input"] {
+  width: 8.5rem;
+  flex: 0 0 8.5rem;
+}
+@media (max-width: 639px) {
+  .catalog-import-filters {
+    flex-wrap: wrap;
+  }
+  .catalog-import-filters .field-title {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+}
+.catalog-import-table-wrap {
+  height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.catalog-import-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.catalog-import-table th,
+.catalog-import-table td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.catalog-import-table td:nth-child(2) {
+  overflow: hidden;
+}
+.catalog-import-table th {
+  color: var(--muted);
+  font-weight: 500;
+  background: var(--panel-2);
+  position: sticky;
+  top: 0;
+}
+.catalog-import-check {
+  width: 2.25rem;
+}
+.catalog-import-date {
+  width: 7.5rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.catalog-import-title-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.catalog-import-title {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catalog-exists {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+.catalog-selected {
+  max-height: 5.5rem;
+  overflow-y: auto;
+}
+.catalog-selected-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.catalog-selected-chip {
+  max-width: 12rem;
+  justify-content: flex-start;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.catalog-selected-text {
+  min-width: 0;
+  max-width: 8.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catalog-selected-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+  opacity: 1;
+  cursor: pointer;
+}
+.catalog-selected-remove svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.catalog-selected-remove:hover {
+  color: var(--danger-text);
+  background: color-mix(in srgb, var(--bad) 28%, transparent);
+}

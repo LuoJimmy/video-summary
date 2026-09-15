@@ -1,9 +1,11 @@
+from datetime import datetime
+
 from app.services.authctx import RequestAuth
-from app.services.ingest.base import CatalogItem, ResolvedMedia, SiteAdapter
-from app.services.ingest.bilibili import BilibiliAdapter
+from app.services.ingest.base import CatalogPage, CatalogRef, ResolvedMedia, SiteAdapter
+from app.services.ingest.bilibili import BilibiliAdapter, detect_bilibili_catalog
 from app.services.ingest.generic import GenericAdapter
-from app.services.ingest.xiaoe import XiaoeAdapter
-from app.services.ingest.yueniu import YueniuAdapter
+from app.services.ingest.xiaoe import XiaoeAdapter, detect_xiaoe_catalog
+from app.services.ingest.yueniu import YueniuAdapter, detect_yueniu_catalog
 
 ADAPTERS: dict[str, SiteAdapter] = {
     "generic": GenericAdapter(),
@@ -29,11 +31,27 @@ def resolve_media(url: str, auth: RequestAuth, media_url_override: str = "") -> 
     return adapter.resolve(url, auth, media_url_override=media_url_override)
 
 
+def detect_catalog(url: str) -> CatalogRef | None:
+    text = (url or "").strip()
+    if not text:
+        return None
+    adapter = pick_adapter(text)
+    if adapter.name == "bilibili":
+        return detect_bilibili_catalog(text)
+    if adapter.name == "xiaoe":
+        return detect_xiaoe_catalog(text)
+    if adapter.name == "yueniu":
+        return detect_yueniu_catalog(text)
+    return detect_xiaoe_catalog(text) or detect_bilibili_catalog(text) or detect_yueniu_catalog(text)
+
+
 def list_catalog(
     adapter_name: str,
     auth: RequestAuth,
     catalog_id: str,
-    since=None,
-) -> list[CatalogItem]:
+    since: datetime | None = None,
+    cursor: str | None = None,
+    limit: int | None = None,
+) -> CatalogPage:
     adapter = ADAPTERS.get(adapter_name) or ADAPTERS["generic"]
-    return adapter.list_catalog(auth, catalog_id, since=since)
+    return adapter.list_catalog(auth, catalog_id, since=since, cursor=cursor, limit=limit)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -17,6 +18,7 @@ from app.services.domain import job_domain_id
 from app.services.ingest.base import CatalogError, CatalogItem
 from app.services.ingest.bilibili import is_bili_rate_limited
 from app.services.ingest.registry import list_catalog
+from app.services.ingest.xiaoe import XIAOE_HOSTS, parse_xiaoe_ref
 from app.services.jsonutil import dumps
 from app.services.pipeline import get_pipeline
 from app.services.settings_store import parse_flag
@@ -209,17 +211,98 @@ def clear_logs(db: Session) -> dict:
     return {"ok": True}
 
 
-def _existing_urls(db: Session) -> set[str]:
-    found: set[str] = set()
-    for (url,) in db.query(Job.source_url).all():
-        raw = (url or "").strip()
-        if not raw:
-            continue
-        found.add(raw)
+@dataclass
+class CatalogExistsIndex:
+    urls: set[str] = field(default_factory=set)
+    xiaoe_ids: set[str] = field(default_factory=set)
+    xiaoe_title_days: set[tuple[str, str]] = field(default_factory=set)
+    xiaoe_title_counts: dict[str, int] = field(default_factory=dict)
+
+
+def _xiaoe_host(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return False
+    return any(host == domain or host.endswith("." + domain) for domain in XIAOE_HOSTS)
+
+
+def _title_key(title: str) -> str:
+    text = re.sub(r"\s+", "", (title or "").strip().lower())
+    return re.sub(r"^\d{1,2}\.\d{1,2}", "", text)
+
+
+def _shanghai_day(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    stamp = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(SHANGHAI).strftime("%Y-%m-%d")
+
+
+def remember_catalog_item(
+    index: CatalogExistsIndex,
+    url: str,
+    title: str = "",
+    created_at: datetime | None = None,
+) -> None:
+    raw = (url or "").strip()
+    if raw:
+        index.urls.add(raw)
         normalized = normalize_source_url(raw)
         if normalized:
-            found.add(normalized)
-    return found
+            index.urls.add(normalized)
+        _, resource_id = parse_xiaoe_ref(raw)
+        if resource_id:
+            index.xiaoe_ids.add(resource_id.lower())
+    if not raw or not _xiaoe_host(raw):
+        return
+    key = _title_key(title)
+    if not key:
+        return
+    index.xiaoe_title_counts[key] = index.xiaoe_title_counts.get(key, 0) + 1
+    day = _shanghai_day(created_at)
+    if day:
+        index.xiaoe_title_days.add((key, day))
+
+
+def catalog_item_exists(
+    index: CatalogExistsIndex,
+    url: str,
+    title: str = "",
+    created_at: datetime | None = None,
+) -> bool:
+    raw = (url or "").strip()
+    if not raw:
+        return False
+    if raw in index.urls:
+        return True
+    normalized = normalize_source_url(raw)
+    if normalized and normalized in index.urls:
+        return True
+    _, resource_id = parse_xiaoe_ref(raw)
+    if resource_id and resource_id.lower() in index.xiaoe_ids:
+        return True
+    if not _xiaoe_host(raw):
+        return False
+    key = _title_key(title)
+    if not key:
+        return False
+    day = _shanghai_day(created_at)
+    if day and (key, day) in index.xiaoe_title_days:
+        return True
+    if not day and index.xiaoe_title_counts.get(key, 0) == 1:
+        return True
+    return False
+
+
+def _existing_catalog(db: Session) -> CatalogExistsIndex:
+    index = CatalogExistsIndex()
+    for url, title, source_created_at in db.query(Job.source_url, Job.title, Job.source_created_at).all():
+        remember_catalog_item(index, url or "", title or "", source_created_at)
+    return index
+
+
+def _existing_urls(db: Session) -> set[str]:
+    return _existing_catalog(db).urls
 
 
 def _sort_items(items: list[CatalogItem]) -> list[CatalogItem]:
@@ -291,7 +374,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
             since = parse_since_date(cfg.since) if cfg.since else None
             remaining = cfg.max_jobs
             domain_id = job_domain_id(cfg.domain_id)
-            existing = _existing_urls(db)
+            existing = _existing_catalog(db)
             log = ScheduleLog(trigger=trigger, status="running", summary="正在扫描站点")
             db.add(log)
             db.commit()
@@ -346,8 +429,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                         continue
                     if since is not None and item.created_at is not None and ensure_utc(item.created_at) < ensure_utc(since):
                         continue
-                    normalized = normalize_source_url(url)
-                    if url in existing or (normalized and normalized in existing):
+                    if catalog_item_exists(existing, url, item.title, item.created_at):
                         detail["skipped"] += 1
                         skipped_total += 1
                         continue
@@ -370,9 +452,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                     db.commit()
                     db.refresh(job)
                     created_ids.append(job.id)
-                    existing.add(url)
-                    if normalized:
-                        existing.add(normalized)
+                    remember_catalog_item(existing, url, item.title, item.created_at)
                     remaining -= 1
                     detail["created"] += 1
                     created_total += 1

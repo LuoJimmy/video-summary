@@ -39,6 +39,21 @@ def test_pick_source_datetime_prefers_known_keys():
     assert picked.astimezone(SHANGHAI).day == 13
 
 
+def test_pick_source_datetime_reads_lesson_start_at():
+    picked = pick_source_datetime(
+        {
+            "start_at": "09-15 14:50",
+            "full_start_at": "1970-01-01",
+            "lesson_start_at": "2026-09-15 19:30:00",
+        }
+    )
+    assert picked is not None
+    assert picked.astimezone(SHANGHAI).year == 2026
+    assert picked.astimezone(SHANGHAI).month == 9
+    assert picked.astimezone(SHANGHAI).day == 15
+    assert picked.astimezone(SHANGHAI).hour == 19
+
+
 def test_pick_source_datetime_reads_start_ts():
     # 约牛 toDetailSimple 现以 startTs（秒级 Unix）表示开播时间
     picked = pick_source_datetime({"liveName": "题材梳理课", "startTs": 1788695842})

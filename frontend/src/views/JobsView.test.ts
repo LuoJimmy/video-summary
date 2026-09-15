@@ -13,6 +13,7 @@ vi.mock("../api", () => ({
     deleteJob: vi.fn(),
     preview: vi.fn(),
     createJob: vi.fn(),
+    fromCatalog: vi.fn(),
     uploadJob: vi.fn(),
     batchJobs: vi.fn(),
     settings: vi.fn(),
@@ -112,6 +113,8 @@ beforeEach(() => {
   vi.mocked(api.jobs).mockReset();
   vi.mocked(api.sites).mockReset();
   vi.mocked(api.createJob).mockReset();
+  vi.mocked(api.fromCatalog).mockReset();
+  vi.mocked(api.preview).mockReset();
   vi.mocked(api.uploadJob).mockReset();
   vi.mocked(api.batchJobs).mockReset();
   vi.mocked(api.deleteJob).mockReset();
@@ -153,6 +156,18 @@ describe("任务列表筛选", () => {
     expect(el.textContent).toContain("内容领域");
     expect(el.textContent).toContain("A股盘面课");
     expect(el.textContent).toContain("视频作者");
+    expect(el.textContent).not.toContain("媒体地址覆盖");
+  });
+
+  it("解析失败任务出现后才展开媒体地址覆盖", async () => {
+    const el = await mountJobs([
+      makeJob({
+        status: "failed",
+        stage: "failed",
+        error: "无法解析媒体地址，请填写媒体地址覆盖后重试",
+      }),
+    ]);
+    expect(el.textContent).toContain("媒体地址覆盖");
   });
 
   it("按标题筛选时把关键字传给列表接口", async () => {
@@ -514,5 +529,132 @@ describe("任务列表分页", () => {
     expect(
       el.querySelector('.pager [aria-current="page"]')?.textContent?.trim()
     ).toBe("2");
+  });
+});
+
+describe("整站目录拉取", () => {
+  it("粘贴空间页会弹出确认框并走 from-catalog", async () => {
+    const el = await mountJobs();
+    vi.mocked(api.preview).mockResolvedValue({
+      adapter: "bilibili",
+      title: "B 站 UP 空间",
+      source_type: "catalog",
+      media_url: "",
+      needs_media_url: false,
+      message: "本批 1 条",
+      catalog: true,
+      catalog_label: "B 站 UP 空间",
+      listed: 1,
+      existing: 0,
+      next_cursor: "next-token",
+      truncated: false,
+      items: [
+        {
+          source_url: "https://www.bilibili.com/video/BV1new000002",
+          title: "新稿",
+          author: "UP",
+          created_at: "2026-08-14T04:00:00Z",
+          exists: false,
+        },
+      ],
+    });
+    vi.mocked(api.fromCatalog).mockResolvedValue({
+      created: 1,
+      skipped: 0,
+      next_cursor: "next-token",
+      truncated: false,
+      message: "已创建 1 个任务。该B 站 UP 空间还有后续内容。",
+      catalog_label: "B 站 UP 空间",
+    });
+    const textarea = el.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "https://space.bilibili.com/11430504";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    const start = [...el.querySelectorAll("button")].find(
+      (btn) => btn.textContent?.trim() === "开始转写总结"
+    ) as HTMLButtonElement;
+    start.click();
+    await flush();
+    expect(document.body.textContent).toContain("确认拉取B 站 UP 空间");
+    const submit = [...document.body.querySelectorAll("button")].find(
+      (btn) => btn.textContent?.trim() === "创建本批"
+    ) as HTMLButtonElement;
+    submit.click();
+    await flush();
+    expect(api.createJob).not.toHaveBeenCalled();
+    expect(api.fromCatalog).toHaveBeenCalled();
+    expect(el.textContent).toContain("继续拉取下一批");
+  });
+
+  it("单视频不弹目录确认框", async () => {
+    const el = await mountJobs();
+    vi.mocked(api.createJob).mockResolvedValue(makeJob({ id: "job-new" }));
+    const textarea = el.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "https://www.bilibili.com/video/BV1a4awzsENn";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    const start = [...el.querySelectorAll("button")].find(
+      (btn) => btn.textContent?.trim() === "开始转写总结"
+    ) as HTMLButtonElement;
+    start.click();
+    await flush();
+    expect(api.createJob).toHaveBeenCalled();
+    expect(api.fromCatalog).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain("确认拉取");
+  });
+
+  it("空间页拉取等待时按钮显示 loading", async () => {
+    const el = await mountJobs();
+    let release!: (value: unknown) => void;
+    vi.mocked(api.preview).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        })
+    );
+    const textarea = el.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "https://space.bilibili.com/11430504/video";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    expect(
+      [...el.querySelectorAll("button")].some(
+        (btn) => btn.textContent?.trim() === "预解析"
+      )
+    ).toBe(false);
+    const start = [...el.querySelectorAll("button")].find(
+      (btn) => btn.textContent?.includes("开始转写总结")
+    ) as HTMLButtonElement;
+    start.click();
+    await flush();
+    expect(start.getAttribute("aria-busy")).toBe("true");
+    expect(start.disabled).toBe(true);
+    expect(start.textContent).toContain("解析中");
+    expect(start.querySelector(".animate-spin")).toBeTruthy();
+    release({
+      adapter: "bilibili",
+      title: "B 站 UP 空间",
+      source_type: "catalog",
+      media_url: "",
+      needs_media_url: false,
+      message: "本批 1 条",
+      catalog: true,
+      catalog_label: "B 站 UP 空间",
+      listed: 1,
+      existing: 0,
+      next_cursor: "",
+      truncated: false,
+      items: [
+        {
+          source_url: "https://www.bilibili.com/video/BV1new000002",
+          title: "新稿",
+          author: "UP",
+          created_at: "2026-08-14T04:00:00Z",
+          exists: false,
+        },
+      ],
+    });
+    await flush();
+    expect(document.body.textContent).toContain("确认拉取B 站 UP 空间");
+    expect(start.getAttribute("aria-busy")).not.toBe("true");
   });
 });

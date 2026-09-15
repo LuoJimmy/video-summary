@@ -16,6 +16,7 @@ SOURCE_TIME_KEYS = (
     "ctime",
     "zb_start_at",
     "alive_start_at",
+    "lesson_start_at",
     "start_at",
     "zb_start_time",
     "liveStartTime",
