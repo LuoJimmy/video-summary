@@ -10,7 +10,11 @@ const releases = loadChangelog();
   <div>
     <div class="page-title">
       <Button variant="ghost" size="icon" class="icon-btn" as-child>
-        <router-link to="/settings" aria-label="返回设置" title="返回设置">
+        <router-link
+          :to="{ path: '/settings', query: { tab: 'about' } }"
+          aria-label="返回设置"
+          title="返回设置"
+        >
           <ChevronLeft />
         </router-link>
       </Button>

@@ -119,7 +119,8 @@ async function mountSettings(
     summary: string;
     detail: unknown[];
   }> = [],
-  plugins: PluginInfo[] = samplePlugins
+  plugins: PluginInfo[] = samplePlugins,
+  path = "/settings"
 ) {
   vi.mocked(api.settings).mockResolvedValue(settings);
   vi.mocked(api.lexicon).mockResolvedValue({
@@ -140,7 +141,7 @@ async function mountSettings(
       },
     ],
   });
-  await router.push("/settings");
+  await router.push(path);
   await router.isReady();
   root = document.createElement("div");
   document.body.appendChild(root);
@@ -280,6 +281,22 @@ describe("设置页模型限制说明", () => {
     expect(about?.textContent).toContain("更新日志");
     const changelog = about?.querySelector('a[href="/settings/changelog"]');
     expect(changelog?.textContent).toContain("查看本版本更新");
+  });
+
+  it("从更新日志返回时停留在关于 tab", async () => {
+    const el = await mountSettings(
+      localSettings,
+      [],
+      samplePlugins,
+      "/settings?tab=about"
+    );
+    const about = el.querySelector("#settings-panel-about") as HTMLElement;
+    const models = el.querySelector("#settings-panel-models") as HTMLElement;
+    expect(about.style.display).not.toBe("none");
+    expect(models.style.display).toBe("none");
+    expect(
+      el.querySelector("#settings-tab-about")?.getAttribute("aria-selected")
+    ).toBe("true");
   });
 
   it("展示定时任务站点与日志区", async () => {

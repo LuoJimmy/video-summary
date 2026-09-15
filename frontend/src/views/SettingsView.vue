@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   api,
   type AppSettings,
@@ -9,7 +10,13 @@ import {
   type ScheduleLog,
 } from "../api";
 import { emptyDomainPack, type DomainPack } from "../utils/domain";
+import {
+  ChevronRight,
+  Loader2,
+  Plus,
 import { ChevronRight, Loader2, Plus, Trash2 } from "@lucide/vue";
+  Trash2,
+} from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -104,7 +111,35 @@ const settingsTabs: { id: SettingsTab; label: string }[] = [
   { id: "appearance", label: "外观" },
   { id: "about", label: "关于" },
 ];
-const settingsTab = ref<SettingsTab>("models");
+const route = useRoute();
+const router = useRouter();
+
+function isSettingsTab(value: unknown): value is SettingsTab {
+  return settingsTabs.some((item) => item.id === value);
+}
+
+function settingsTabFromQuery(raw: unknown): SettingsTab {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return isSettingsTab(value) ? value : "models";
+}
+
+const settingsTab = ref<SettingsTab>(settingsTabFromQuery(route.query.tab));
+
+function selectSettingsTab(id: SettingsTab) {
+  settingsTab.value = id;
+  const nextTab = id === "models" ? undefined : id;
+  const current = Array.isArray(route.query.tab)
+    ? route.query.tab[0]
+    : route.query.tab;
+  if (current === nextTab) return;
+  const query = { ...route.query };
+  if (nextTab) {
+    query.tab = nextTab;
+  } else {
+    delete query.tab;
+  }
+  void router.replace({ query });
+}
 let pluginTimer: number | undefined;
 const maxJobOptions = Array.from({ length: 20 }, (_, index) =>
   String(index + 1)
@@ -714,7 +749,7 @@ const highlightPhrasesText = computed({
         :aria-selected="settingsTab === item.id"
         :aria-controls="`settings-panel-${item.id}`"
         :tabindex="settingsTab === item.id ? 0 : -1"
-        @click="settingsTab = item.id"
+        @click="selectSettingsTab(item.id)"
       >
         {{ item.label }}
       </button>
