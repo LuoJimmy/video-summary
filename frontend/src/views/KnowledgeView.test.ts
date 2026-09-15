@@ -1,7 +1,11 @@
 import { createApp, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type KnowledgeConversationSummary, type KnowledgeDoc } from "../api";
+import {
+  api,
+  type KnowledgeConversationSummary,
+  type KnowledgeDoc,
+} from "../api";
 import KnowledgeView from "./KnowledgeView.vue";
 
 vi.mock("../api", () => ({
@@ -141,7 +145,10 @@ describe("知识库任务列表分页", () => {
     const el = await mountKnowledge(firstPage, 12);
     expect(api.knowledge).toHaveBeenCalledWith("", "a-share", 1, 10);
     expect(el.textContent).toContain("当前领域已收录 12 个任务");
-    expect(el.querySelector(".pager")?.textContent).toContain("第 1 / 2 页");
+    expect(el.querySelector(".pager")?.textContent).toContain("共 12 条数据");
+    expect(
+      el.querySelector('.pager [aria-current="page"]')?.textContent?.trim()
+    ).toBe("1");
     expect(el.textContent).toContain("课0");
     expect(el.textContent).not.toContain("课10");
 
@@ -157,18 +164,26 @@ describe("知识库任务列表分页", () => {
       page: 2,
       page_size: 10,
     });
-    clickNamed(el, "下一页");
+    (el.querySelector('[aria-label="下一页"]') as HTMLButtonElement).click();
     await flush();
     expect(api.knowledge).toHaveBeenCalledWith("", "a-share", 2, 10);
     expect(el.textContent).toContain("课10");
-    expect(el.querySelector(".pager")?.textContent).toContain("第 2 / 2 页");
+    expect(
+      el.querySelector('.pager [aria-current="page"]')?.textContent?.trim()
+    ).toBe("2");
   });
 
-  it("任务不超过一页时不显示翻页按钮", async () => {
+  it("任务不超过一页时翻页按钮不可用", async () => {
     const el = await mountKnowledge([makeDoc()], 1);
     expect(el.textContent).toContain("当前领域已收录 1 个任务");
-    expect(el.querySelector(".pager")?.textContent).toContain("共 1 条");
-    expect(el.querySelector(".pager")?.textContent).not.toContain("下一页");
+    expect(el.querySelector(".pager")?.textContent).toContain("共 1 条数据");
+    expect(el.querySelectorAll(".pager-item")).toHaveLength(1);
+    expect(
+      (el.querySelector('[aria-label="上一页"]') as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect(
+      (el.querySelector('[aria-label="下一页"]') as HTMLButtonElement).disabled
+    ).toBe(true);
   });
 
   it("文档引用显示 locator 并链到段落", async () => {
@@ -244,9 +259,9 @@ describe("知识库问答历史", () => {
     expect(el.textContent).toContain("量能放大可以低吸");
     expect(el.querySelector(".chat-title")?.textContent).toBe("茅台怎么看");
     expect(el.querySelector('button[aria-label="新对话"]')).not.toBeNull();
-    expect(el.querySelector(".kb-history-item")?.classList.contains("active")).toBe(
-      true
-    );
+    expect(
+      el.querySelector(".kb-history-item")?.classList.contains("active")
+    ).toBe(true);
   });
 
   it("按关键词搜索历史记录", async () => {

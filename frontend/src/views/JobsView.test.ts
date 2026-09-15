@@ -486,3 +486,32 @@ describe("批量管理", () => {
     expect(api.batchJobs).not.toHaveBeenCalled();
   });
 });
+
+describe("任务列表分页", () => {
+  it("展示增强分页器并按页请求", async () => {
+    const firstPage = Array.from({ length: 10 }, (_, index) =>
+      makeJob({ id: `job-${index}`, title: `课${index}` })
+    );
+    const el = await mountJobs(firstPage, 12);
+    expect(el.querySelector(".pager")?.textContent).toContain("共 12 条数据");
+    expect(el.querySelector(".pager")?.textContent).toContain("10条/页");
+    expect(el.querySelector('[aria-label="跳至页码"]')).toBeTruthy();
+    expect(
+      el.querySelector('.pager [aria-current="page"]')?.textContent?.trim()
+    ).toBe("1");
+
+    vi.mocked(api.jobs).mockResolvedValue({
+      items: [makeJob({ id: "job-10", title: "课10" })],
+      total: 12,
+      page: 2,
+      page_size: 10,
+    });
+    (el.querySelector('[aria-label="下一页"]') as HTMLButtonElement).click();
+    await flush();
+    expect(api.jobs).toHaveBeenCalledWith(2, 10, expect.any(Object));
+    expect(el.textContent).toContain("课10");
+    expect(
+      el.querySelector('.pager [aria-current="page"]')?.textContent?.trim()
+    ).toBe("2");
+  });
+});

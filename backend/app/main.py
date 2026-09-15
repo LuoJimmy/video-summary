@@ -12,6 +12,7 @@ from app.services.seed import seed_defaults
 from app.services.schedule import start_scheduler, stop_scheduler
 from app.services.sensevoice import start_sensevoice_prefetch
 from app.services.settings_store import load_settings, migrate_settings_defaults
+from app.services.sourcetime import backfill_job_source_times
 
 
 @asynccontextmanager
@@ -23,6 +24,7 @@ async def lifespan(_: FastAPI):
     try:
         seed_defaults(db)
         migrate_settings_defaults(db)
+        backfill_job_source_times(db)
         transcribe_model = load_settings(db).transcribe_model
     finally:
         db.close()

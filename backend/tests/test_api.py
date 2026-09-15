@@ -824,7 +824,8 @@ def test_pipeline_document_uses_extracted_title_when_auto_named(tmp_path, monkey
     source.write_text(
         "<!doctype html><html><head><title>壳</title></head><body>"
         '<script>window.__NUXT__={data:[{data:{article_id:"abc",'
-        'title:"9月11日盘前纪要",content:"\\u003Cp\\u003E每天十分钟阅读，开阔看盘思路。\\u003C/p\\u003E"}}]}</script>'
+        'title:"9月11日盘前纪要",content:"\\u003Cp\\u003E每天十分钟阅读，开阔看盘思路。\\u003C/p\\u003E",'
+        'create_time:"2026-09-11 06:46:44"}}]}</script>'
         "</body></html>",
         encoding="utf-8",
     )
@@ -841,6 +842,13 @@ def test_pipeline_document_uses_extracted_title_when_auto_named(tmp_path, monkey
     stored = db.get(Job, job_id)
     assert stored.status == "done"
     assert stored.title == "9月11日盘前纪要"
+    assert stored.source_created_at is not None
+    from app.services.sourcetime import ensure_utc
+    from zoneinfo import ZoneInfo
+
+    local = ensure_utc(stored.source_created_at).astimezone(ZoneInfo("Asia/Shanghai"))
+    assert local.month == 9
+    assert local.day == 11
     db.close()
 
 

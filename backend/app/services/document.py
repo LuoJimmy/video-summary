@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -12,6 +13,7 @@ from urllib.parse import unquote, urlparse
 from app.schemas import TranscriptSegment
 from app.services.httpclient import http_client
 from app.services.ingest.base import DOCUMENT_EXTS, path_suffix
+from app.services.sourcetime import parse_source_datetime, pick_html_datetime
 from app.services.textnorm import normalize_transcript
 
 DEFAULT_UA = (
@@ -55,6 +57,7 @@ class ExtractedDocument:
     author: str = ""
     suffix: str = ""
     used_ocr: bool = False
+    created_at: datetime | None = None
     extra: dict = field(default_factory=dict)
 
 
@@ -117,7 +120,7 @@ def extract_url(url: str, dest_dir: Path, headers: dict[str, str] | None = None,
     last_error: Exception | None = None
     for candidate in candidate_page_urls(url):
         try:
-            path = download_url(candidate, dest_dir, headers=headers or {})
+            path, header_date = download_url(candidate, dest_dir, headers=headers or {})
             raw = path.read_bytes()
             if _looks_html(raw) and path.suffix.lower() not in {".pdf", ".docx", ".doc"}:
                 extracted = extract_html_bytes(
@@ -125,6 +128,8 @@ def extract_url(url: str, dest_dir: Path, headers: dict[str, str] | None = None,
                 )
             else:
                 extracted = extract_path(path, progress=progress)
+            if extracted.created_at is None:
+                extracted.created_at = header_date
             extracted.extra["source_path"] = str(path)
             return extracted
         except DocumentError as exc:
@@ -132,7 +137,7 @@ def extract_url(url: str, dest_dir: Path, headers: dict[str, str] | None = None,
     raise last_error or DocumentError("未能从网页提取到正文")
 
 
-def download_url(url: str, dest_dir: Path, headers: dict[str, str] | None = None) -> Path:
+def download_url(url: str, dest_dir: Path, headers: dict[str, str] | None = None) -> tuple[Path, datetime | None]:
     dest_dir.mkdir(parents=True, exist_ok=True)
     request_headers = {"User-Agent": DEFAULT_UA, **(headers or {})}
     with http_client(timeout=60.0, headers=request_headers, follow_redirects=True) as client:
@@ -154,7 +159,8 @@ def download_url(url: str, dest_dir: Path, headers: dict[str, str] | None = None
         suffix = ".bin"
     dest = dest_dir / f"source{suffix}"
     dest.write_bytes(data)
-    return dest
+    header_date = parse_source_datetime(response.headers.get("last-modified"))
+    return dest, header_date
 
 
 def extract_pdf(path: Path, *, ocr=None, progress=None) -> ExtractedDocument:
@@ -167,7 +173,9 @@ def extract_pdf(path: Path, *, ocr=None, progress=None) -> ExtractedDocument:
     except Exception as exc:
         raise DocumentError(f"无法打开 PDF：{exc}") from exc
     pages: list[str] = []
+    meta = {}
     try:
+        meta = doc.metadata or {}
         for page in doc:
             pages.append(normalize_transcript(page.get_text("text") or ""))
     finally:
@@ -183,7 +191,14 @@ def extract_pdf(path: Path, *, ocr=None, progress=None) -> ExtractedDocument:
     segments = _page_segments(pages)
     if not segments:
         raise DocumentError("未能提取到文字（可能是空白页或扫描件识别失败）")
-    return ExtractedDocument(segments=segments, title=path.stem, suffix=".pdf", used_ocr=used_ocr)
+    created = parse_source_datetime(meta.get("creationDate")) or parse_source_datetime(meta.get("modDate"))
+    return ExtractedDocument(
+        segments=segments,
+        title=path.stem,
+        suffix=".pdf",
+        used_ocr=used_ocr,
+        created_at=created,
+    )
 
 
 def ocr_pdf_pages(path: Path, ocr) -> list[str]:
@@ -244,11 +259,13 @@ def extract_docx(path: Path) -> ExtractedDocument:
     if not segments:
         raise DocumentError("Word 文档里没有可提取的文字")
     core = document.core_properties
+    created = parse_source_datetime(core.created) or parse_source_datetime(core.modified)
     return ExtractedDocument(
         segments=segments,
         title=(core.title or "").strip() or path.stem,
         author=(core.author or "").strip(),
         suffix=path.suffix.lower(),
+        created_at=created,
     )
 
 
@@ -271,9 +288,39 @@ def extract_html_file(path: Path) -> ExtractedDocument:
     return extract_html_bytes(path.read_bytes(), fallback_title=path.stem)
 
 
+def document_file_created_at(path: Path) -> datetime | None:
+    if not path.is_file():
+        return None
+    suffix = path.suffix.lower()
+    if suffix in {".html", ".htm"}:
+        return pick_html_datetime(path.read_text(encoding="utf-8", errors="ignore"))
+    if suffix == ".docx":
+        try:
+            extracted = extract_docx(path)
+        except Exception:
+            return None
+        return extracted.created_at
+    if suffix == ".pdf":
+        try:
+            import fitz
+        except ImportError:
+            return None
+        try:
+            doc = fitz.open(path)
+            try:
+                meta = doc.metadata or {}
+            finally:
+                doc.close()
+        except Exception:
+            return None
+        return parse_source_datetime(meta.get("creationDate")) or parse_source_datetime(meta.get("modDate"))
+    return None
+
+
 def extract_html_bytes(raw: bytes, fallback_title: str = "") -> ExtractedDocument:
     html = raw.decode("utf-8", errors="ignore")
     title, author, text = _embedded_article(html)
+    created = pick_html_datetime(html)
     if not text:
         try:
             import trafilatura
@@ -284,6 +331,7 @@ def extract_html_bytes(raw: bytes, fallback_title: str = "") -> ExtractedDocumen
         if metadata is not None:
             title = title or (metadata.title or "").strip()
             author = author or (metadata.author or "").strip()
+            created = created or parse_source_datetime(getattr(metadata, "date", None))
     if not text:
         text = _html_to_text(html)
     title = title or fallback_title
@@ -292,7 +340,9 @@ def extract_html_bytes(raw: bytes, fallback_title: str = "") -> ExtractedDocumen
     segments = chunk_paragraphs(_split_blocks(text))
     if not segments:
         raise DocumentError("未能从网页提取到正文")
-    return ExtractedDocument(segments=segments, title=title, author=author, suffix=".html")
+    return ExtractedDocument(
+        segments=segments, title=title, author=author, suffix=".html", created_at=created
+    )
 
 
 def _embedded_article(html: str) -> tuple[str, str, str]:

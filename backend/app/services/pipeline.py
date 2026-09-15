@@ -359,6 +359,7 @@ class Pipeline:
             title = extracted_title
         if (extracted.author or "").strip() and not author:
             author = extracted.author.strip()
+        source_created_at = extracted.created_at or job.source_created_at
         segments = extracted.segments
         source_file = Path(str(extracted.extra.get("source_path") or ""))
         if not source_file.is_file():
@@ -370,6 +371,7 @@ class Pipeline:
             job,
             title=title,
             author=author,
+            source_created_at=source_created_at,
             source_path=str(source_file) if source_file.is_file() else job.source_path,
             transcript_json=dumps([item.model_dump() for item in segments]),
             timing_json=dumps(timer.payload()),

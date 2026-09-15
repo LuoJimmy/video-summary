@@ -18,9 +18,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { api, type Job, type ResolvePreview, type Site } from "../api";
 import type { DomainPack } from "../utils/domain";
 import { emptyDomainPack } from "../utils/domain";
-import { parseSourceUrls, publicSourceUrl, SOURCE_URL_BATCH_LIMIT } from "../utils/source";
+import {
+  parseSourceUrls,
+  publicSourceUrl,
+  SOURCE_URL_BATCH_LIMIT,
+} from "../utils/source";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
 import JobTitleEditor from "../components/JobTitleEditor.vue";
+import Pagination from "../components/Pagination.vue";
+import { pageAfterSizeChange } from "../utils/pager";
 import {
   formatDateStamp,
   formatDuration,
@@ -31,7 +37,7 @@ import {
 } from "../utils/time";
 import { toast } from "vue-sonner";
 
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 10;
 const LOCAL_FILE_ACCEPT =
   "video/*,audio/*,.pdf,.doc,.docx,.md,.txt,.html,.htm,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/html";
 const router = useRouter();
@@ -44,6 +50,7 @@ const createTab = ref<CreateTab>("online");
 const jobs = ref<Job[]>([]);
 const total = ref(0);
 const page = ref(1);
+const pageSize = ref(DEFAULT_PAGE_SIZE);
 const sites = ref<Site[]>([]);
 const sourceUrl = ref("");
 const mediaOverride = ref("");
@@ -78,7 +85,7 @@ let timer: number | undefined;
 let clock: number | undefined;
 
 const totalPages = computed(() =>
-  Math.max(1, Math.ceil(total.value / PAGE_SIZE))
+  Math.max(1, Math.ceil(total.value / pageSize.value))
 );
 const hasFilters = computed(() =>
   Boolean(
@@ -140,11 +147,11 @@ function currentFilters() {
 }
 
 async function loadJobs() {
-  const listed = await api.jobs(page.value, PAGE_SIZE, currentFilters());
+  const listed = await api.jobs(page.value, pageSize.value, currentFilters());
   const pages = Math.max(1, Math.ceil(listed.total / listed.page_size));
   if (page.value > pages) {
     page.value = pages;
-    const again = await api.jobs(page.value, PAGE_SIZE, currentFilters());
+    const again = await api.jobs(page.value, pageSize.value, currentFilters());
     jobs.value = again.items;
     total.value = again.total;
     return;
@@ -202,6 +209,13 @@ async function refresh() {
 function goPage(next: number) {
   if (next < 1 || next > totalPages.value || next === page.value) return;
   page.value = next;
+  void loadJobs();
+}
+
+function changePageSize(next: number) {
+  if (next === pageSize.value) return;
+  page.value = pageAfterSizeChange(page.value, pageSize.value, next);
+  pageSize.value = next;
   void loadJobs();
 }
 
@@ -756,10 +770,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="mt-4 flex items-center gap-2">
-      <Checkbox
-        id="summarize-document"
-        v-model="summarizeDocument"
-      />
+      <Checkbox id="summarize-document" v-model="summarizeDocument" />
       <Label for="summarize-document">文档生成 AI 总结</Label>
       <button
         type="button"
@@ -901,7 +912,9 @@ onBeforeUnmount(() => {
           class="list-check"
           :model-value="selectedIds.has(job.id)"
           :aria-label="`选择 ${job.title || '未命名任务'}`"
-          @update:model-value="(value: boolean | 'indeterminate') => setJobSelected(job.id, value)"
+          @update:model-value="
+            (value: boolean | 'indeterminate') => setJobSelected(job.id, value)
+          "
         />
         <div class="list-main">
           <div class="list-title-row">
@@ -955,29 +968,14 @@ onBeforeUnmount(() => {
         </Button>
       </div>
     </div>
-    <div v-if="total > 0 || hasFilters" class="pager">
-      <span class="msg"
-        >共 {{ total }} 条<template v-if="totalPages > 1"
-          >，第 {{ page }} / {{ totalPages }} 页</template
-        ></span
-      >
-      <template v-if="totalPages > 1">
-        <Button
-          variant="outline"
-          type="button"
-          :disabled="page <= 1"
-          @click="goPage(page - 1)"
-          >上一页</Button
-        >
-        <Button
-          variant="outline"
-          type="button"
-          :disabled="page >= totalPages"
-          @click="goPage(page + 1)"
-          >下一页</Button
-        >
-      </template>
-    </div>
+    <Pagination
+      v-if="total > 0 || hasFilters"
+      :total="total"
+      :page="page"
+      :page-size="pageSize"
+      @update:page="goPage"
+      @update:page-size="changePageSize"
+    />
   </section>
 
   <JobDeleteDialog

@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import { EllipsisVertical, PanelLeft, Pencil, Plus, Trash2 } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +38,8 @@ import {
 import type { DomainPack } from "../utils/domain";
 import { emptyDomainPack } from "../utils/domain";
 import { formatChatHtml } from "../utils/highlight";
+import Pagination from "../components/Pagination.vue";
+import { pageAfterSizeChange } from "../utils/pager";
 import { formatTimestamp } from "../utils/time";
 import { toast } from "vue-sonner";
 
@@ -40,13 +49,14 @@ type ChatMessage = {
   citations?: KnowledgeHit[];
 };
 
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 10;
 const HISTORY_PAGE_SIZE = 30;
 const input = ref("");
 const loading = ref(false);
 const documents = ref<KnowledgeDoc[]>([]);
 const total = ref(0);
 const page = ref(1);
+const pageSize = ref(DEFAULT_PAGE_SIZE);
 const messages = ref<ChatMessage[]>([]);
 const thread = ref<HTMLElement | null>(null);
 const domainId = ref("a-share");
@@ -69,7 +79,7 @@ const renamingBusy = ref(false);
 let searchTimer: number | undefined;
 
 const totalPages = computed(() =>
-  Math.max(1, Math.ceil(total.value / PAGE_SIZE))
+  Math.max(1, Math.ceil(total.value / pageSize.value))
 );
 const historyHasMore = computed(
   () => historyItems.value.length < historyTotal.value
@@ -99,7 +109,12 @@ function currentPack(): DomainPack | undefined {
 }
 
 async function loadDocuments() {
-  const listed = await api.knowledge("", domainId.value, page.value, PAGE_SIZE);
+  const listed = await api.knowledge(
+    "",
+    domainId.value,
+    page.value,
+    pageSize.value
+  );
   const pages = Math.max(1, Math.ceil(listed.job_count / listed.page_size));
   if (page.value > pages) {
     page.value = pages;
@@ -107,7 +122,7 @@ async function loadDocuments() {
       "",
       domainId.value,
       page.value,
-      PAGE_SIZE
+      pageSize.value
     );
     documents.value = again.documents;
     total.value = again.job_count;
@@ -151,6 +166,15 @@ watch(historyQuery, onHistorySearch);
 function goPage(next: number) {
   if (next < 1 || next > totalPages.value || next === page.value) return;
   page.value = next;
+  void loadDocuments().catch((err) => {
+    toast.error(err instanceof Error ? err.message : "无法加载知识库");
+  });
+}
+
+function changePageSize(next: number) {
+  if (next === pageSize.value) return;
+  page.value = pageAfterSizeChange(page.value, pageSize.value, next);
+  pageSize.value = next;
   void loadDocuments().catch((err) => {
     toast.error(err instanceof Error ? err.message : "无法加载知识库");
   });
@@ -227,9 +251,13 @@ async function confirmRename() {
   }
   renamingBusy.value = true;
   try {
-    const saved = await api.renameKnowledgeConversation(renaming.value.id, title);
+    const saved = await api.renameKnowledgeConversation(
+      renaming.value.id,
+      title
+    );
     const index = historyItems.value.findIndex((item) => item.id === saved.id);
-    if (index >= 0) historyItems.value[index] = { ...historyItems.value[index], ...saved };
+    if (index >= 0)
+      historyItems.value[index] = { ...historyItems.value[index], ...saved };
     renaming.value = null;
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "重命名失败");
@@ -341,11 +369,7 @@ function jobLink(hit: {
   return `/jobs/${hit.job_id}?${query.toString()}`;
 }
 
-function citePlace(hit: {
-  locator?: string;
-  start: number;
-  kind: string;
-}) {
+function citePlace(hit: { locator?: string; start: number; kind: string }) {
   if (hit.locator) return hit.locator;
   if (hit.start > 0) return formatTimestamp(hit.start);
   return "";
@@ -566,29 +590,14 @@ function loadMoreHistory() {
       </div>
     </div>
   </section>
-  <div v-if="total > 0" class="pager">
-    <span class="msg"
-      >共 {{ total }} 条<template v-if="totalPages > 1"
-        >，第 {{ page }} / {{ totalPages }} 页</template
-      ></span
-    >
-    <template v-if="totalPages > 1">
-      <Button
-        variant="outline"
-        type="button"
-        :disabled="page <= 1"
-        @click="goPage(page - 1)"
-        >上一页</Button
-      >
-      <Button
-        variant="outline"
-        type="button"
-        :disabled="page >= totalPages"
-        @click="goPage(page + 1)"
-        >下一页</Button
-      >
-    </template>
-  </div>
+  <Pagination
+    v-if="total > 0"
+    :total="total"
+    :page="page"
+    :page-size="pageSize"
+    @update:page="goPage"
+    @update:page-size="changePageSize"
+  />
   <div v-if="!total" class="card">
     <p class="msg">还没有转写。完成任务后会自动进入这个私有知识库。</p>
   </div>
@@ -638,7 +647,9 @@ function loadMoreHistory() {
     <DialogContent class="sm:max-w-md">
       <DialogHeader>
         <DialogTitle>重命名对话</DialogTitle>
-        <DialogDescription>修改这条历史记录在列表里显示的标题。</DialogDescription>
+        <DialogDescription
+          >修改这条历史记录在列表里显示的标题。</DialogDescription
+        >
       </DialogHeader>
       <Input
         v-model="renameDraft"

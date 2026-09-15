@@ -236,13 +236,21 @@ def test_extract_html_from_nuxt_article():
     html = (
         "<!doctype html><html><head><title>壳标题</title></head><body>"
         '<script>window.__NUXT__=(function(){return {data:[{data:{article_id:"abc",'
-        'title:"9月11日盘前纪要",content:"\\u003Cp\\u003E每天十分钟阅读，开阔看盘思路。\\u003C/p\\u003E"'
+        'title:"9月11日盘前纪要",content:"\\u003Cp\\u003E每天十分钟阅读，开阔看盘思路。\\u003C/p\\u003E",'
+        'create_time:"2026-09-11 06:46:44"'
         "}}]}})();</script></body></html>"
     ).encode("utf-8")
     extracted = extract_html_bytes(html)
     assert extracted.title == "9月11日盘前纪要"
     assert "每天十分钟阅读" in extracted.segments[0].text
     assert "开阔看盘思路" in extracted.segments[0].text
+    assert extracted.created_at is not None
+    from zoneinfo import ZoneInfo
+
+    local = extracted.created_at.astimezone(ZoneInfo("Asia/Shanghai"))
+    assert local.month == 9
+    assert local.day == 11
+    assert local.hour == 6
 
 
 def test_extract_html_from_jsonld_article():
@@ -250,12 +258,19 @@ def test_extract_html_from_jsonld_article():
         "<!doctype html><html><head><title>页标题</title>"
         '<script type="application/ld+json">'
         '{"@type":"NewsArticle","headline":"利率会议前瞻",'
-        '"author":{"name":"研报社"},"articleBody":"美联储即将公布议息结果。"}'
+        '"author":{"name":"研报社"},"datePublished":"2026-09-11T07:39:00+08:00",'
+        '"articleBody":"美联储即将公布议息结果。"}'
         "</script></head><body></body></html>"
     ).encode("utf-8")
     extracted = extract_html_bytes(html)
     assert extracted.title == "利率会议前瞻"
     assert extracted.author == "研报社"
+    assert extracted.created_at is not None
+    from zoneinfo import ZoneInfo
+
+    local = extracted.created_at.astimezone(ZoneInfo("Asia/Shanghai"))
+    assert local.hour == 7
+    assert local.minute == 39
     assert "美联储即将公布议息结果" in extracted.segments[0].text
 
 
