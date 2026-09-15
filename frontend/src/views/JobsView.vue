@@ -72,13 +72,13 @@ const filterTitle = ref("");
 const filterStatus = ref("");
 const filterDateFrom = ref("");
 const filterDateTo = ref("");
-const filterSortKey = ref("source_desc");
+const filterSortKey = ref("created_desc");
 const appliedFilters = ref({
   title: "",
   status: "",
   dateFrom: "",
   dateTo: "",
-  sort: "source",
+  sort: "created",
   order: "desc",
 });
 let timer: number | undefined;
@@ -177,13 +177,13 @@ function resetFilters() {
   filterStatus.value = "";
   filterDateFrom.value = "";
   filterDateTo.value = "";
-  filterSortKey.value = "source_desc";
+  filterSortKey.value = "created_desc";
   appliedFilters.value = {
     title: "",
     status: "",
     dateFrom: "",
     dateTo: "",
-    sort: "source",
+    sort: "created",
     order: "desc",
   };
   page.value = 1;
@@ -565,7 +565,7 @@ function setFilterStatus(value: string | null) {
 }
 
 function parseSortKey(value: string | null) {
-  const [sortRaw, orderRaw] = (value || "source_desc").split("_");
+  const [sortRaw, orderRaw] = (value || "created_desc").split("_");
   const sort =
     sortRaw === "created" || sortRaw === "title" ? sortRaw : "source";
   const order = orderRaw === "asc" ? "asc" : "desc";
@@ -853,10 +853,10 @@ onBeforeUnmount(() => {
             <SelectValue placeholder="排序" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="source_desc">原片时间 降序</SelectItem>
-            <SelectItem value="source_asc">原片时间 升序</SelectItem>
             <SelectItem value="created_desc">任务时间 降序</SelectItem>
             <SelectItem value="created_asc">任务时间 升序</SelectItem>
+            <SelectItem value="source_desc">原片时间 降序</SelectItem>
+            <SelectItem value="source_asc">原片时间 升序</SelectItem>
             <SelectItem value="title_desc">标题名称 降序</SelectItem>
             <SelectItem value="title_asc">标题名称 升序</SelectItem>
           </SelectContent>

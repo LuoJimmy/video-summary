@@ -143,8 +143,9 @@ describe("任务列表筛选", () => {
       el.querySelector(".job-filters [aria-label='排序方向']")
     ).toBeFalsy();
     expect(el.querySelector(".job-filters")?.textContent).toContain(
-      "原片时间 降序"
+      "任务时间 降序"
     );
+    expect(api.jobs).toHaveBeenCalledWith(1, 10, { sort: "created" });
     expect(el.querySelector(".job-filters")?.textContent).toContain("查询");
     expect(el.querySelector(".job-filters")?.textContent).toContain("重置");
     expect(el.querySelector(".pager")?.textContent).not.toContain("清除筛选");
@@ -268,7 +269,7 @@ describe("任务列表筛选", () => {
     vi.mocked(api.jobs).mockClear();
     clickNamed(el, "重置");
     await flush();
-    expect(api.jobs).toHaveBeenCalledWith(1, 10, {});
+    expect(api.jobs).toHaveBeenCalledWith(1, 10, { sort: "created" });
     expect(
       (el.querySelector("input[placeholder='标题 / 作者']") as HTMLInputElement)
         .value
