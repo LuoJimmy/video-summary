@@ -311,6 +311,12 @@ describe("文档来源", () => {
     const file = el.querySelector("input[type='file']") as HTMLInputElement;
     expect(file.accept).toContain(".pdf");
     expect(file.accept).toContain(".doc");
+    const pick = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("选择文件")
+    );
+    expect(pick).toBeTruthy();
+    expect(pick?.querySelector("svg")).toBeTruthy();
+    expect(el.textContent).toContain("未选择文件");
     const box = el.querySelector("#summarize-document");
     expect(
       box?.getAttribute("data-state") || box?.getAttribute("aria-checked")

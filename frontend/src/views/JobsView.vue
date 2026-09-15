@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowDown, ArrowUp, Info } from "@lucide/vue";
+import { ArrowDown, ArrowUp, Info, Upload } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,6 +31,8 @@ import {
 import { toast } from "vue-sonner";
 
 const PAGE_SIZE = 10;
+const LOCAL_FILE_ACCEPT =
+  "video/*,audio/*,.pdf,.doc,.docx,.md,.txt,.html,.htm,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/html";
 const router = useRouter();
 type CreateTab = "online" | "local";
 const createTabs: { id: CreateTab; label: string }[] = [
@@ -51,6 +53,7 @@ const domainId = ref("a-share");
 const domainPresets = ref<DomainPack[]>([emptyDomainPack()]);
 const preview = ref<ResolvePreview | null>(null);
 const file = ref<File | null>(null);
+const fileInput = ref<HTMLInputElement | null>(null);
 const summarizeDocument = ref(false);
 const deleting = ref<Job | null>(null);
 const nowMs = ref(Date.now());
@@ -281,6 +284,17 @@ async function createFromFile() {
   }
 }
 
+function pickLocalFile() {
+  const input = fileInput.value;
+  if (!input) return;
+  input.value = "";
+  input.click();
+}
+
+function onLocalFileChange(event: Event) {
+  file.value = (event.target as HTMLInputElement).files?.[0] || null;
+}
+
 function setCreateTab(id: CreateTab) {
   createTab.value = id;
 }
@@ -438,15 +452,25 @@ onBeforeUnmount(() => {
       role="tabpanel"
       aria-labelledby="create-tab-local"
     >
-      <div class="field field-md">
-        <Label>上传本地视频 / 音频 / 文档</Label>
-        <Input
-          type="file"
-          accept="video/*,audio/*,.pdf,.doc,.docx,.md,.txt,.html,.htm,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/html"
-          @change="
-            file = ($event.target as HTMLInputElement).files?.[0] || null
-          "
-        />
+      <div class="field">
+        <Label for="local-file">上传本地视频 / 音频 / 文档</Label>
+        <div class="upload-picker">
+          <input
+            id="local-file"
+            ref="fileInput"
+            class="sr-only"
+            type="file"
+            :accept="LOCAL_FILE_ACCEPT"
+            tabindex="-1"
+            aria-hidden="true"
+            @change="onLocalFileChange"
+          />
+          <Button variant="outline" type="button" @click="pickLocalFile">
+            <Upload aria-hidden="true" />
+            选择文件
+          </Button>
+          <span class="msg">{{ file ? file.name : "未选择文件" }}</span>
+        </div>
       </div>
       <div class="grid two mt-4">
         <div class="field field-md">
