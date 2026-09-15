@@ -62,3 +62,17 @@ export function publicSourceUrl(url?: string | null): string {
   if (/^https?:\/\//i.test(text)) return text;
   return "";
 }
+
+export const SOURCE_URL_BATCH_LIMIT = 30;
+
+export function parseSourceUrls(text: string): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const line of (text || "").split(/\r?\n/)) {
+    const url = line.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return urls;
+}

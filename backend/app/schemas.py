@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -175,6 +175,21 @@ class JobListOut(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class JobBatchActionIn(BaseModel):
+    action: Literal["cancel", "retry", "delete"]
+    ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class JobBatchFailedItem(BaseModel):
+    id: str
+    reason: str
+
+
+class JobBatchActionOut(BaseModel):
+    ok: list[str] = Field(default_factory=list)
+    failed: list[JobBatchFailedItem] = Field(default_factory=list)
 
 
 class JobMediaOut(BaseModel):

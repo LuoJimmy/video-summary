@@ -112,6 +112,13 @@ export type JobList = {
   page_size: number;
 };
 
+export type JobBatchAction = "cancel" | "retry" | "delete";
+
+export type JobBatchResult = {
+  ok: string[];
+  failed: Array<{ id: string; reason: string }>;
+};
+
 export type ResolvePreview = {
   adapter: string;
   title: string;
@@ -371,6 +378,11 @@ export const api = {
     request<Job>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   deleteJob: (id: string) =>
     request<{ ok: boolean }>(`/api/jobs/${id}`, { method: "DELETE" }),
+  batchJobs: (action: JobBatchAction, ids: string[]) =>
+    request<JobBatchResult>("/api/jobs/batch", {
+      method: "POST",
+      body: JSON.stringify({ action, ids }),
+    }),
   resummarizeJob: (id: string) =>
     request<Job>(`/api/jobs/${id}/resummarize`, { method: "POST" }),
   proofreadJob: (id: string) =>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowDown, ArrowUp, Info, Upload } from "@lucide/vue";
+import { ArrowDown, ArrowUp, Info, Upload, X } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,10 +14,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { api, type Job, type ResolvePreview, type Site } from "../api";
 import type { DomainPack } from "../utils/domain";
 import { emptyDomainPack } from "../utils/domain";
-import { publicSourceUrl } from "../utils/source";
+import { parseSourceUrls, publicSourceUrl, SOURCE_URL_BATCH_LIMIT } from "../utils/source";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
 import JobTitleEditor from "../components/JobTitleEditor.vue";
 import {
@@ -52,10 +53,13 @@ const siteId = ref("");
 const domainId = ref("a-share");
 const domainPresets = ref<DomainPack[]>([emptyDomainPack()]);
 const preview = ref<ResolvePreview | null>(null);
-const file = ref<File | null>(null);
+const files = ref<File[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const summarizeDocument = ref(false);
-const deleting = ref<Job | null>(null);
+const creating = ref(false);
+const batchBusy = ref(false);
+const selectedIds = ref<Set<string>>(new Set());
+const deleting = ref<{ title: string; ids: string[] } | null>(null);
 const nowMs = ref(Date.now());
 const filterTitle = ref("");
 const filterStatus = ref("");
@@ -84,6 +88,21 @@ const hasFilters = computed(() =>
     appliedFilters.value.dateTo
   )
 );
+const sourceUrls = computed(() => parseSourceUrls(sourceUrl.value));
+const selectedCount = computed(() => selectedIds.value.size);
+const pageSelectedCount = computed(
+  () => jobs.value.filter((job) => selectedIds.value.has(job.id)).length
+);
+const pageSelectState = computed(() => {
+  if (!jobs.value.length || pageSelectedCount.value === 0) return false;
+  if (pageSelectedCount.value === jobs.value.length) return true;
+  return "indeterminate" as const;
+});
+const filePickerLabel = computed(() => {
+  if (!files.value.length) return "未选择文件";
+  if (files.value.length === 1) return files.value[0].name;
+  return `已选 ${files.value.length} 个文件`;
+});
 
 function dateFilterBounds(from: string, to: string) {
   if (from && to && from > to) {
@@ -206,6 +225,40 @@ function syncClock() {
   }
 }
 
+function canRetry(status: string) {
+  return status === "failed" || status === "cancelled";
+}
+
+function pruneSelection(ids: string[]) {
+  if (!ids.length) return;
+  const remove = new Set(ids);
+  selectedIds.value = new Set(
+    [...selectedIds.value].filter((id) => !remove.has(id))
+  );
+}
+
+function setJobSelected(id: string, checked: boolean | "indeterminate") {
+  const next = new Set(selectedIds.value);
+  if (checked === true) next.add(id);
+  else next.delete(id);
+  selectedIds.value = next;
+}
+
+function setPageSelect(value: boolean | "indeterminate") {
+  const next = new Set(selectedIds.value);
+  if (value === true) {
+    for (const job of jobs.value) next.add(job.id);
+  } else {
+    for (const job of jobs.value) next.delete(job.id);
+  }
+  selectedIds.value = next;
+}
+
+function offPageSelectedIds() {
+  const onPage = new Set(jobs.value.map((job) => job.id));
+  return [...selectedIds.value].filter((id) => !onPage.has(id));
+}
+
 async function rename(job: Job, nextTitle: string) {
   try {
     const updated = await api.updateJob(job.id, { title: nextTitle });
@@ -228,13 +281,30 @@ async function cancel(job: Job) {
 }
 
 function askDelete(job: Job) {
-  deleting.value = job;
+  deleting.value = { title: job.title, ids: [job.id] };
+}
+
+function askBatchDelete() {
+  const ids = [...selectedIds.value];
+  if (!ids.length) return;
+  deleting.value = { title: "", ids };
 }
 
 async function confirmDelete() {
   if (!deleting.value) return;
+  const ids = deleting.value.ids;
   try {
-    await api.deleteJob(deleting.value.id);
+    if (ids.length === 1) {
+      await api.deleteJob(ids[0]);
+    } else {
+      const result = await api.batchJobs("delete", ids);
+      if (result.failed.length && !result.ok.length) {
+        toast.error(result.failed[0]?.reason || "删除失败");
+      } else if (result.failed.length) {
+        toast.warning(`成功 ${result.ok.length}，失败 ${result.failed.length}`);
+      }
+    }
+    pruneSelection(ids);
     deleting.value = null;
     await loadJobs();
   } catch (err) {
@@ -243,44 +313,203 @@ async function confirmDelete() {
   }
 }
 
+function toastBatchAction(
+  ok: number,
+  failed: number,
+  emptyMessage: string,
+  doneLabel: string
+) {
+  if (!ok && !failed) {
+    toast.error(emptyMessage);
+    return;
+  }
+  if (!ok) {
+    toast.error(emptyMessage);
+    return;
+  }
+  if (!failed) {
+    toast.success(`${doneLabel} ${ok} 个任务`);
+    return;
+  }
+  toast.warning(`成功 ${ok}，失败 ${failed}`);
+}
+
+async function batchCancel() {
+  const ids = [
+    ...jobs.value
+      .filter((job) => selectedIds.value.has(job.id) && isJobActive(job.status))
+      .map((job) => job.id),
+    ...offPageSelectedIds(),
+  ];
+  if (!ids.length) {
+    toast.error("所选任务没有可取消的");
+    return;
+  }
+  if (batchBusy.value) return;
+  batchBusy.value = true;
+  try {
+    const result = await api.batchJobs("cancel", ids);
+    pruneSelection(result.ok);
+    toastBatchAction(
+      result.ok.length,
+      result.failed.length,
+      "所选任务没有可取消的",
+      "已取消"
+    );
+    await loadJobs();
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "取消失败");
+  } finally {
+    batchBusy.value = false;
+  }
+}
+
+async function batchRetry() {
+  const ids = [
+    ...jobs.value
+      .filter((job) => selectedIds.value.has(job.id) && canRetry(job.status))
+      .map((job) => job.id),
+    ...offPageSelectedIds(),
+  ];
+  if (!ids.length) {
+    toast.error("所选任务没有可重试的");
+    return;
+  }
+  if (batchBusy.value) return;
+  batchBusy.value = true;
+  try {
+    const result = await api.batchJobs("retry", ids);
+    pruneSelection(result.ok);
+    toastBatchAction(
+      result.ok.length,
+      result.failed.length,
+      "所选任务没有可重试的",
+      "已重试"
+    );
+    await loadJobs();
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "重试失败");
+  } finally {
+    batchBusy.value = false;
+  }
+}
+
 async function doPreview() {
+  const urls = sourceUrls.value;
+  if (!urls.length && !mediaOverride.value.trim()) {
+    toast.error("请提供页面地址或媒体地址");
+    return;
+  }
   preview.value = await api.preview({
-    source_url: sourceUrl.value,
-    media_url_override: mediaOverride.value,
+    source_url: urls[0] || "",
+    media_url_override: urls.length > 1 ? "" : mediaOverride.value,
     site_id: siteId.value || null,
   });
 }
 
+async function finishCreated(created: Job[], failed: number, verb: string) {
+  if (created.length === 1 && failed === 0) {
+    await router.push(`/jobs/${created[0].id}`);
+    return;
+  }
+  if (created.length) await loadJobs();
+  if (!failed) {
+    toast.success(`已${verb} ${created.length} 个任务`);
+    return;
+  }
+  if (!created.length) {
+    toast.error(`${verb}失败`);
+    return;
+  }
+  toast.warning(`成功 ${created.length}，失败 ${failed}`);
+}
+
 async function createFromUrl() {
+  const urls = sourceUrls.value;
+  if (!urls.length) {
+    toast.error("请提供页面地址或媒体地址");
+    return;
+  }
+  if (urls.length > SOURCE_URL_BATCH_LIMIT) {
+    toast.error(`一次最多创建 ${SOURCE_URL_BATCH_LIMIT} 个任务`);
+    return;
+  }
+  if (urls.length > 1 && mediaOverride.value.trim()) {
+    toast.error("批量创建时请先清空媒体地址覆盖");
+    return;
+  }
+  if (creating.value) return;
+  creating.value = true;
+  const created: Job[] = [];
+  let failed = 0;
   try {
-    const job = await api.createJob({
-      source_url: sourceUrl.value,
-      media_url_override: mediaOverride.value,
-      title: title.value,
-      author: author.value,
-      site_id: siteId.value || null,
-      domain_id: domainId.value || "a-share",
-      summarize_document: summarizeDocument.value,
-    });
-    await router.push(`/jobs/${job.id}`);
-  } catch (err) {
-    toast.error(err instanceof Error ? err.message : "创建失败");
+    for (const url of urls) {
+      try {
+        created.push(
+          await api.createJob({
+            source_url: url,
+            media_url_override: urls.length === 1 ? mediaOverride.value : "",
+            title: urls.length === 1 ? title.value : "",
+            author: author.value,
+            site_id: siteId.value || null,
+            domain_id: domainId.value || "a-share",
+            summarize_document: summarizeDocument.value,
+          })
+        );
+      } catch (err) {
+        failed += 1;
+        if (urls.length === 1) {
+          toast.error(err instanceof Error ? err.message : "创建失败");
+        }
+      }
+    }
+    if (urls.length === 1) {
+      if (created[0]) await router.push(`/jobs/${created[0].id}`);
+      return;
+    }
+    await finishCreated(created, failed, "创建");
+  } finally {
+    creating.value = false;
   }
 }
 
 async function createFromFile() {
-  if (!file.value) return;
+  const picked = files.value;
+  if (!picked.length) return;
+  if (picked.length > SOURCE_URL_BATCH_LIMIT) {
+    toast.error(`一次最多创建 ${SOURCE_URL_BATCH_LIMIT} 个任务`);
+    return;
+  }
+  if (creating.value) return;
+  creating.value = true;
+  const created: Job[] = [];
+  let failed = 0;
   try {
-    const job = await api.uploadJob(
-      file.value,
-      title.value || file.value.name,
-      domainId.value || "a-share",
-      author.value,
-      summarizeDocument.value
-    );
-    await router.push(`/jobs/${job.id}`);
-  } catch (err) {
-    toast.error(err instanceof Error ? err.message : "上传失败");
+    for (const item of picked) {
+      try {
+        created.push(
+          await api.uploadJob(
+            item,
+            picked.length === 1 ? title.value || item.name : item.name,
+            domainId.value || "a-share",
+            author.value,
+            summarizeDocument.value
+          )
+        );
+      } catch (err) {
+        failed += 1;
+        if (picked.length === 1) {
+          toast.error(err instanceof Error ? err.message : "上传失败");
+        }
+      }
+    }
+    if (picked.length === 1) {
+      if (created[0]) await router.push(`/jobs/${created[0].id}`);
+      return;
+    }
+    await finishCreated(created, failed, "上传");
+  } finally {
+    creating.value = false;
   }
 }
 
@@ -292,15 +521,21 @@ function pickLocalFile() {
 }
 
 function onLocalFileChange(event: Event) {
-  file.value = (event.target as HTMLInputElement).files?.[0] || null;
+  files.value = Array.from((event.target as HTMLInputElement).files || []);
+}
+
+function removeLocalFile(index: number) {
+  files.value = files.value.filter((_, itemIndex) => itemIndex !== index);
+  const input = fileInput.value;
+  if (input) input.value = "";
+}
+
+function localFileKey(item: File, index: number) {
+  return `${item.name}-${item.size}-${item.lastModified}-${index}`;
 }
 
 function setCreateTab(id: CreateTab) {
   createTab.value = id;
-}
-
-function setSummarizeDocument(value: boolean | "indeterminate") {
-  summarizeDocument.value = value === true;
 }
 
 function setSiteId(value: string | null) {
@@ -383,14 +618,15 @@ onBeforeUnmount(() => {
       role="tabpanel"
       aria-labelledby="create-tab-online"
     >
+      <div class="field field-full">
+        <Label>页面或媒体地址</Label>
+        <Textarea
+          v-model="sourceUrl"
+          rows="3"
+          placeholder="每行一个地址，例如 https://www.bilibili.com/video/BV1a4awzsENn"
+        />
+      </div>
       <div class="grid two">
-        <div class="field field-lg">
-          <Label>页面或媒体地址</Label>
-          <Input
-            v-model="sourceUrl"
-            placeholder="https://www.bilibili.com/video/BV1a4awzsENn"
-          />
-        </div>
         <div class="field field-lg">
           <Label>媒体地址覆盖（m3u8/mp4，可选）</Label>
           <Input
@@ -398,7 +634,7 @@ onBeforeUnmount(() => {
             placeholder="登录后从 Network 复制的流地址"
           />
         </div>
-        <div class="field field-md">
+        <div v-if="sourceUrls.length <= 1" class="field field-md">
           <Label>标题（可选）</Label>
           <Input v-model="title" />
         </div>
@@ -460,6 +696,7 @@ onBeforeUnmount(() => {
             ref="fileInput"
             class="sr-only"
             type="file"
+            multiple
             :accept="LOCAL_FILE_ACCEPT"
             tabindex="-1"
             aria-hidden="true"
@@ -469,11 +706,28 @@ onBeforeUnmount(() => {
             <Upload aria-hidden="true" />
             选择文件
           </Button>
-          <span class="msg">{{ file ? file.name : "未选择文件" }}</span>
+          <span class="msg">{{ filePickerLabel }}</span>
         </div>
+        <ul v-if="files.length > 1" class="file-name-list">
+          <li
+            v-for="(item, index) in files"
+            :key="localFileKey(item, index)"
+            class="file-name-item"
+          >
+            <span class="file-name-text">{{ item.name }}</span>
+            <button
+              type="button"
+              class="file-remove"
+              :aria-label="`移除 ${item.name}`"
+              @click="removeLocalFile(index)"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </li>
+        </ul>
       </div>
       <div class="grid two mt-4">
-        <div class="field field-md">
+        <div v-if="files.length <= 1" class="field field-md">
           <Label>标题（可选）</Label>
           <Input v-model="title" />
         </div>
@@ -504,8 +758,7 @@ onBeforeUnmount(() => {
     <div class="mt-4 flex items-center gap-2">
       <Checkbox
         id="summarize-document"
-        :checked="summarizeDocument"
-        @update:checked="setSummarizeDocument"
+        v-model="summarizeDocument"
       />
       <Label for="summarize-document">文档生成 AI 总结</Label>
       <button
@@ -521,8 +774,16 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div v-show="createTab === 'online'" class="row mt-4">
-      <Button variant="outline" type="button" @click="doPreview">预解析</Button>
-      <Button type="button" @click="createFromUrl">开始转写总结</Button>
+      <Button
+        variant="outline"
+        type="button"
+        :disabled="creating"
+        @click="doPreview"
+        >预解析</Button
+      >
+      <Button type="button" :disabled="creating" @click="createFromUrl"
+        >开始转写总结</Button
+      >
     </div>
     <p v-if="preview && createTab === 'online'" class="msg mt-3">
       适配器 {{ preview.adapter }} / {{ preview.source_type }}
@@ -530,7 +791,9 @@ onBeforeUnmount(() => {
       {{ preview.message || preview.media_url || "已解析到媒体地址" }}
     </p>
     <div v-show="createTab === 'local'" class="row mt-4">
-      <Button type="button" @click="createFromFile">上传并处理</Button>
+      <Button type="button" :disabled="creating" @click="createFromFile"
+        >上传并处理</Button
+      >
     </div>
   </section>
 
@@ -595,26 +858,68 @@ onBeforeUnmount(() => {
         >
       </div>
     </div>
+    <div v-if="jobs.length" class="list-toolbar">
+      <Checkbox
+        :model-value="pageSelectState"
+        aria-label="全选当前页"
+        @update:model-value="setPageSelect"
+      />
+      <template v-if="selectedCount">
+        <span class="msg">已选 {{ selectedCount }}</span>
+        <div class="list-actions">
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="batchBusy"
+            @click="batchCancel"
+            >取消</Button
+          >
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="batchBusy"
+            @click="batchRetry"
+            >重试</Button
+          >
+          <Button
+            variant="outline"
+            class="text-destructive"
+            type="button"
+            :disabled="batchBusy"
+            @click="askBatchDelete"
+            >删除</Button
+          >
+        </div>
+      </template>
+    </div>
     <div v-if="!jobs.length" class="msg empty-list">
       {{ hasFilters ? "没有符合条件的任务。" : "还没有任务。" }}
     </div>
     <div v-for="job in jobs" :key="job.id" class="list-item">
-      <div class="list-main">
-        <div class="list-title-row">
-          <Badge
-            v-if="formatDateStamp(job.source_created_at)"
-            variant="secondary"
-            class="date-badge"
-          >
-            {{ formatDateStamp(job.source_created_at) }}
-          </Badge>
-          <JobTitleEditor
-            :title="job.title"
-            :href="`/jobs/${job.id}`"
-            :save="(next) => rename(job, next)"
-          />
+      <div class="list-body">
+        <Checkbox
+          class="list-check"
+          :model-value="selectedIds.has(job.id)"
+          :aria-label="`选择 ${job.title || '未命名任务'}`"
+          @update:model-value="(value: boolean | 'indeterminate') => setJobSelected(job.id, value)"
+        />
+        <div class="list-main">
+          <div class="list-title-row">
+            <Badge
+              v-if="formatDateStamp(job.source_created_at)"
+              variant="secondary"
+              class="date-badge"
+            >
+              {{ formatDateStamp(job.source_created_at) }}
+            </Badge>
+            <JobTitleEditor
+              :title="job.title"
+              :href="`/jobs/${job.id}`"
+              :save="(next) => rename(job, next)"
+            />
+          </div>
+          <div class="msg">{{ jobSourceLine(job) }}</div>
         </div>
-        <div class="msg">{{ jobSourceLine(job) }}</div>
       </div>
       <div class="list-actions">
         <Badge
@@ -678,6 +983,7 @@ onBeforeUnmount(() => {
   <JobDeleteDialog
     :open="Boolean(deleting)"
     :title="deleting?.title || ''"
+    :count="deleting?.ids.length || 0"
     @close="deleting = null"
     @confirm="confirmDelete"
   />

@@ -11,7 +11,17 @@ from sqlalchemy.orm import Query as SAQuery, Session
 from app.config import settings
 from app.database import get_db
 from app.models import Job, stamp_job_start
-from app.schemas import JobCreateIn, JobListOut, JobMediaOut, JobOut, JobUpdateIn, ResolvePreview
+from app.schemas import (
+    JobBatchActionIn,
+    JobBatchActionOut,
+    JobBatchFailedItem,
+    JobCreateIn,
+    JobListOut,
+    JobMediaOut,
+    JobOut,
+    JobUpdateIn,
+    ResolvePreview,
+)
 from app.serializers import job_out
 from app.services.authctx import build_auth
 from app.services.domain import job_domain_id
@@ -105,6 +115,47 @@ def _delete_job_files(job_id: str) -> None:
         return
     if folder.is_dir():
         shutil.rmtree(folder, ignore_errors=True)
+
+
+def _unique_job_ids(ids: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for raw in ids:
+        job_id = (raw or "").strip()
+        if not job_id or job_id in seen:
+            continue
+        seen.add(job_id)
+        unique.append(job_id)
+    return unique
+
+
+def _apply_cancel(job: Job) -> None:
+    if job.status not in {"pending", "running"}:
+        if job.status == "cancelled":
+            return
+        raise HTTPException(400, "当前状态不能取消")
+    request_cancel(job.id)
+    job.status = "cancelled"
+    job.stage = "cancelled"
+    job.error = "已取消"
+
+
+def _apply_retry(job: Job) -> None:
+    clear_cancel(job.id)
+    stamp_job_start(job)
+    job.status = "pending"
+    job.stage = "queued"
+    job.error = ""
+    job.progress = 0
+
+
+def _apply_delete(db: Session, job: Job) -> None:
+    if job.status in {"pending", "running"}:
+        request_cancel(job.id)
+    else:
+        clear_cancel(job.id)
+    _delete_job_files(job.id)
+    db.delete(job)
 
 
 @router.get("", response_model=JobListOut)
@@ -336,6 +387,43 @@ async def upload_job(
     return job_out(job)
 
 
+@router.post("/batch", response_model=JobBatchActionOut)
+def batch_jobs(
+    payload: JobBatchActionIn,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> JobBatchActionOut:
+    ids = _unique_job_ids(payload.ids)
+    if not ids:
+        raise HTTPException(400, "请提供任务 id")
+    ok: list[str] = []
+    failed: list[JobBatchFailedItem] = []
+    retry_ids: list[str] = []
+    for job_id in ids:
+        job = db.get(Job, job_id)
+        if job is None:
+            failed.append(JobBatchFailedItem(id=job_id, reason="任务不存在"))
+            continue
+        try:
+            if payload.action == "cancel":
+                _apply_cancel(job)
+            elif payload.action == "retry":
+                if job.status not in {"failed", "cancelled"}:
+                    raise HTTPException(400, "当前状态不能重试")
+                _apply_retry(job)
+                retry_ids.append(job.id)
+            else:
+                _apply_delete(db, job)
+        except HTTPException as exc:
+            failed.append(JobBatchFailedItem(id=job_id, reason=str(exc.detail)))
+            continue
+        ok.append(job_id)
+    db.commit()
+    for job_id in retry_ids:
+        background.add_task(_enqueue, job_id)
+    return JobBatchActionOut(ok=ok, failed=failed)
+
+
 @router.post("/{job_id}/resummarize", response_model=JobOut)
 def resummarize_job(job_id: str, background: BackgroundTasks, db: Session = Depends(get_db)) -> JobOut:
     job = db.get(Job, job_id)
@@ -404,14 +492,7 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "任务不存在")
-    if job.status not in {"pending", "running"}:
-        if job.status == "cancelled":
-            return job_out(job)
-        raise HTTPException(400, "当前状态不能取消")
-    request_cancel(job.id)
-    job.status = "cancelled"
-    job.stage = "cancelled"
-    job.error = "已取消"
+    _apply_cancel(job)
     db.commit()
     db.refresh(job)
     return job_out(job)
@@ -422,12 +503,7 @@ def retry_job(job_id: str, background: BackgroundTasks, db: Session = Depends(ge
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "任务不存在")
-    clear_cancel(job.id)
-    stamp_job_start(job)
-    job.status = "pending"
-    job.stage = "queued"
-    job.error = ""
-    job.progress = 0
+    _apply_retry(job)
     db.commit()
     db.refresh(job)
     background.add_task(_enqueue, job.id)
@@ -439,12 +515,7 @@ def delete_job(job_id: str, db: Session = Depends(get_db)) -> dict:
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "任务不存在")
-    if job.status in {"pending", "running"}:
-        request_cancel(job.id)
-    else:
-        clear_cancel(job.id)
-    _delete_job_files(job.id)
-    db.delete(job)
+    _apply_delete(db, job)
     db.commit()
     return {"ok": True}
 

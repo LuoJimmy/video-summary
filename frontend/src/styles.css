@@ -809,6 +809,92 @@ h3 {
 .list-item:last-child {
   border-bottom: 0;
 }
+.list-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+}
+.list-check {
+  margin-top: 0.35rem;
+}
+.list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+.list-toolbar .list-actions {
+  margin-left: auto;
+}
+.field-full {
+  width: 100%;
+  margin-bottom: var(--space-4);
+}
+.field-full [data-slot="textarea"] {
+  min-height: 5.5rem;
+}
+.file-name-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  max-height: 8rem;
+  overflow: auto;
+}
+.file-name-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.125rem 0.25rem;
+  border-radius: var(--radius);
+}
+.file-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  cursor: pointer;
+}
+.file-remove svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.file-name-item:hover .file-remove,
+.file-name-item:focus-within .file-remove {
+  opacity: 1;
+}
+.file-remove:hover {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 16%, transparent);
+}
+@media (hover: none) {
+  .file-remove {
+    opacity: 1;
+  }
+}
 .list-main {
   min-width: 0;
   flex: 1;
@@ -1582,6 +1668,9 @@ label.check small {
   .list-item {
     flex-direction: column;
     gap: 0.625rem;
+  }
+  .list-check {
+    margin-top: 0.15rem;
   }
   .list-actions {
     width: 100%;

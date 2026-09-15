@@ -633,6 +633,63 @@ def test_cancel_pending_job(client, db_session):
     assert denied.status_code == 400
 
 
+def test_batch_job_actions(client, db_session, tmp_path, monkeypatch):
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "download_dir", str(tmp_path / "uploads"))
+    pending = client.post("/api/jobs", json={"source_url": "https://cdn.example.com/a.mp4", "title": "待取消"}).json()
+    done = client.post("/api/jobs", json={"source_url": "https://cdn.example.com/b.mp4", "title": "完成"}).json()
+    failed = client.post("/api/jobs", json={"source_url": "https://cdn.example.com/c.mp4", "title": "失败"}).json()
+    cancelled = client.post("/api/jobs", json={"source_url": "https://cdn.example.com/d.mp4", "title": "已取消"}).json()
+
+    done_row = db_session.get(Job, done["id"])
+    done_row.status = "done"
+    done_row.stage = "done"
+    failed_row = db_session.get(Job, failed["id"])
+    failed_row.status = "failed"
+    failed_row.stage = "failed"
+    cancelled_row = db_session.get(Job, cancelled["id"])
+    cancelled_row.status = "cancelled"
+    cancelled_row.stage = "cancelled"
+    db_session.commit()
+
+    empty = client.post("/api/jobs/batch", json={"action": "cancel", "ids": []})
+    assert empty.status_code == 422
+    unknown = client.post("/api/jobs/batch", json={"action": "nope", "ids": [pending["id"]]})
+    assert unknown.status_code == 422
+
+    cancelled_batch = client.post(
+        "/api/jobs/batch",
+        json={"action": "cancel", "ids": [pending["id"], done["id"], cancelled["id"], "missing"]},
+    ).json()
+    assert set(cancelled_batch["ok"]) == {pending["id"], cancelled["id"]}
+    failed_map = {item["id"]: item["reason"] for item in cancelled_batch["failed"]}
+    assert failed_map[done["id"]] == "当前状态不能取消"
+    assert failed_map["missing"] == "任务不存在"
+    assert db_session.get(Job, pending["id"]).status == "cancelled"
+
+    retried = client.post(
+        "/api/jobs/batch",
+        json={"action": "retry", "ids": [failed["id"], done["id"], cancelled["id"]]},
+    ).json()
+    assert set(retried["ok"]) == {failed["id"], cancelled["id"]}
+    assert any(item["id"] == done["id"] and item["reason"] == "当前状态不能重试" for item in retried["failed"])
+    assert db_session.get(Job, failed["id"]).status == "pending"
+    assert db_session.get(Job, cancelled["id"]).status == "pending"
+
+    folder = tmp_path / "uploads" / done["id"]
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "audio.wav").write_bytes(b"wav")
+    deleted = client.post(
+        "/api/jobs/batch",
+        json={"action": "delete", "ids": [done["id"], "missing"]},
+    ).json()
+    assert deleted["ok"] == [done["id"]]
+    assert deleted["failed"][0]["id"] == "missing"
+    assert db_session.get(Job, done["id"]) is None
+    assert not folder.exists()
+
+
 class FakeExtractor(MediaExtractor):
     def extract_audio(self, source, output_wav, extra_headers=None, max_seconds=None):
         Path(output_wav).parent.mkdir(parents=True, exist_ok=True)

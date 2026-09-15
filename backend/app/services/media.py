@@ -64,7 +64,7 @@ def build_extract_cmd(
                 "2",
             ]
         )
-    if extra_headers:
+    if extra_headers and is_network_source(source):
         header_text = "".join(f"{key}: {value}\r\n" for key, value in extra_headers.items())
         cmd.extend(["-headers", header_text])
     cmd.extend(["-i", source])

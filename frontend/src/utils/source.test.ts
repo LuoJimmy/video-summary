@@ -3,6 +3,7 @@ import {
   documentPreviewKind,
   isDocumentSource,
   locatorPage,
+  parseSourceUrls,
   publicSourceUrl,
   sourceTypeLabel,
 } from "./source";
@@ -36,5 +37,17 @@ describe("source helpers", () => {
     );
     expect(publicSourceUrl("/tmp/report.pdf")).toBe("");
     expect(publicSourceUrl("file:///Users/me/a.pdf")).toBe("");
+  });
+
+  it("按行拆分地址并去掉空行和重复项", () => {
+    expect(
+      parseSourceUrls(
+        " https://cdn.example.com/a.mp4 \n\nhttps://cdn.example.com/b.mp4\r\nhttps://cdn.example.com/a.mp4\n"
+      )
+    ).toEqual([
+      "https://cdn.example.com/a.mp4",
+      "https://cdn.example.com/b.mp4",
+    ]);
+    expect(parseSourceUrls("   \n  ")).toEqual([]);
   });
 });

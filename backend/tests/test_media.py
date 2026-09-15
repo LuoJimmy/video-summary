@@ -24,9 +24,27 @@ def test_build_extract_cmd_maps_audio_and_reconnects_http():
 
 
 def test_build_extract_cmd_skips_reconnect_for_local_file():
-    cmd = build_extract_cmd("ffmpeg", "/data/a.mp4", Path("/tmp/a.wav"))
+    cmd = build_extract_cmd(
+        "ffmpeg",
+        "/data/a.mp4",
+        Path("/tmp/a.wav"),
+        extra_headers={"User-Agent": "Mozilla/5.0", "Referer": "https://example.com"},
+    )
     assert "-reconnect" not in cmd
+    assert "-headers" not in cmd
     assert "-map" in cmd
+
+
+def test_build_extract_cmd_keeps_headers_for_http():
+    cmd = build_extract_cmd(
+        "ffmpeg",
+        "https://cdn.example.com/a.mp4",
+        Path("/tmp/a.wav"),
+        extra_headers={"Referer": "https://www.bilibili.com"},
+    )
+    assert "-headers" in cmd
+    i_at = cmd.index("-i")
+    assert cmd.index("-headers") < i_at
 
 
 def test_build_remux_cmd_maps_video_and_audio():

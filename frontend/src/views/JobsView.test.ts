@@ -14,6 +14,7 @@ vi.mock("../api", () => ({
     preview: vi.fn(),
     createJob: vi.fn(),
     uploadJob: vi.fn(),
+    batchJobs: vi.fn(),
     settings: vi.fn(),
   },
 }));
@@ -46,6 +47,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 
 let root: HTMLElement | undefined;
 let app: ReturnType<typeof createApp> | undefined;
+let mountedRouter: ReturnType<typeof createRouter> | undefined;
 
 async function flush() {
   for (let i = 0; i < 8; i++) await Promise.resolve();
@@ -92,6 +94,7 @@ async function mountJobs(items: Job[] = [makeJob()], total = items.length) {
   document.body.appendChild(root);
   app = createApp(JobsView);
   app.use(router);
+  mountedRouter = router;
   app.mount(root);
   await flush();
   return root;
@@ -102,11 +105,16 @@ afterEach(() => {
   root?.remove();
   root = undefined;
   app = undefined;
+  mountedRouter = undefined;
 });
 
 beforeEach(() => {
   vi.mocked(api.jobs).mockReset();
   vi.mocked(api.sites).mockReset();
+  vi.mocked(api.createJob).mockReset();
+  vi.mocked(api.uploadJob).mockReset();
+  vi.mocked(api.batchJobs).mockReset();
+  vi.mocked(api.deleteJob).mockReset();
 });
 
 function clickNamed(el: HTMLElement, name: string) {
@@ -311,6 +319,7 @@ describe("文档来源", () => {
     const file = el.querySelector("input[type='file']") as HTMLInputElement;
     expect(file.accept).toContain(".pdf");
     expect(file.accept).toContain(".doc");
+    expect(file.multiple).toBe(true);
     const pick = [...el.querySelectorAll("button")].find((item) =>
       item.textContent?.includes("选择文件")
     );
@@ -321,5 +330,159 @@ describe("文档来源", () => {
     expect(
       box?.getAttribute("data-state") || box?.getAttribute("aria-checked")
     ).not.toBe("true");
+  });
+});
+
+function toolbarButton(el: HTMLElement, name: string) {
+  return [...el.querySelectorAll(".list-toolbar button")].find(
+    (item) => item.textContent?.trim() === name
+  ) as HTMLButtonElement | undefined;
+}
+
+describe("批量创建", () => {
+  it("多行地址会多次创建并留在列表", async () => {
+    const el = await mountJobs();
+    vi.mocked(api.createJob).mockImplementation(async (payload) =>
+      makeJob({
+        id: String(payload.source_url).slice(-5),
+        source_url: String(payload.source_url),
+      })
+    );
+    const area = el.querySelector("textarea") as HTMLTextAreaElement;
+    area.value =
+      "https://cdn.example.com/a.mp4\nhttps://cdn.example.com/b.mp4\n";
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    vi.mocked(api.jobs).mockClear();
+    clickNamed(el, "开始转写总结");
+    await flush();
+    await flush();
+    expect(api.createJob).toHaveBeenCalledTimes(2);
+    expect(api.createJob).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ source_url: "https://cdn.example.com/a.mp4" })
+    );
+    expect(api.createJob).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ source_url: "https://cdn.example.com/b.mp4" })
+    );
+    expect(mountedRouter?.currentRoute.value.path).toBe("/");
+    expect(api.jobs).toHaveBeenCalled();
+  });
+
+  it("单条地址创建后进入详情", async () => {
+    const el = await mountJobs();
+    const push = vi.spyOn(mountedRouter!, "push");
+    vi.mocked(api.createJob).mockResolvedValue(makeJob({ id: "job-9" }));
+    const area = el.querySelector("textarea") as HTMLTextAreaElement;
+    area.value = "https://cdn.example.com/a.mp4";
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    clickNamed(el, "开始转写总结");
+    await flush();
+    await flush();
+    await flush();
+    expect(api.createJob).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith("/jobs/job-9");
+  });
+
+  it("多文件会多次上传并留在列表", async () => {
+    const el = await mountJobs();
+    clickCreateTab(el, "本地任务");
+    await flush();
+    vi.mocked(api.uploadJob).mockImplementation(async (file) =>
+      makeJob({ id: file.name, title: file.name })
+    );
+    const input = el.querySelector("input[type='file']") as HTMLInputElement;
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [new File(["a"], "a.mp4"), new File(["b"], "b.mp4")],
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(el.textContent).toContain("已选 2 个文件");
+    expect(el.querySelector('[aria-label="移除 a.mp4"]')).toBeTruthy();
+    vi.mocked(api.jobs).mockClear();
+    clickNamed(el, "上传并处理");
+    await flush();
+    await flush();
+    expect(api.uploadJob).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(api.uploadJob).mock.calls[0][0].name).toBe("a.mp4");
+    expect(vi.mocked(api.uploadJob).mock.calls[1][0].name).toBe("b.mp4");
+    expect(mountedRouter?.currentRoute.value.path).toBe("/");
+    expect(api.jobs).toHaveBeenCalled();
+  });
+
+  it("可从已选文件中移除一项", async () => {
+    const el = await mountJobs();
+    clickCreateTab(el, "本地任务");
+    await flush();
+    vi.mocked(api.uploadJob).mockImplementation(async (file) =>
+      makeJob({ id: file.name, title: file.name })
+    );
+    const input = el.querySelector("input[type='file']") as HTMLInputElement;
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [new File(["a"], "a.mp4"), new File(["b"], "b.mp4")],
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    const remove = el.querySelector(
+      '[aria-label="移除 a.mp4"]'
+    ) as HTMLButtonElement;
+    remove.click();
+    await flush();
+    expect(el.textContent).not.toContain("已选 2 个文件");
+    expect(el.textContent).toContain("b.mp4");
+    expect(el.querySelector('[aria-label="移除 a.mp4"]')).toBeFalsy();
+    clickNamed(el, "上传并处理");
+    await flush();
+    await flush();
+    expect(api.uploadJob).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.uploadJob).mock.calls[0][0].name).toBe("b.mp4");
+  });
+});
+
+describe("批量管理", () => {
+  it("全选后批量删除走确认", async () => {
+    const items = [
+      makeJob({ id: "job-1", title: "甲" }),
+      makeJob({ id: "job-2", title: "乙" }),
+    ];
+    const el = await mountJobs(items);
+    vi.mocked(api.batchJobs).mockResolvedValue({
+      ok: ["job-1", "job-2"],
+      failed: [],
+    });
+    const selectAll = el.querySelector(
+      '[aria-label="全选当前页"]'
+    ) as HTMLElement;
+    selectAll.click();
+    await flush();
+    expect(el.textContent).toContain("已选 2");
+    toolbarButton(el, "删除")?.click();
+    await flush();
+    expect(document.body.textContent).toContain("确定删除 2 个任务");
+    expect(api.batchJobs).not.toHaveBeenCalled();
+    const confirm = [...document.body.querySelectorAll("button")].find(
+      (item) => item.textContent?.trim() === "确认删除"
+    ) as HTMLButtonElement;
+    confirm.click();
+    await flush();
+    await flush();
+    expect(api.batchJobs).toHaveBeenCalledWith("delete", ["job-1", "job-2"]);
+    expect(api.deleteJob).not.toHaveBeenCalled();
+  });
+
+  it("所选都不可取消时不调用批量接口", async () => {
+    const el = await mountJobs([makeJob({ status: "done", stage: "done" })]);
+    const selectAll = el.querySelector(
+      '[aria-label="全选当前页"]'
+    ) as HTMLElement;
+    selectAll.click();
+    await flush();
+    toolbarButton(el, "取消")?.click();
+    await flush();
+    expect(api.batchJobs).not.toHaveBeenCalled();
   });
 });

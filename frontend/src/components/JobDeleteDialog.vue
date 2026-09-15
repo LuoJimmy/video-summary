@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,6 +13,7 @@ import {
 const props = defineProps<{
   open: boolean;
   title: string;
+  count?: number;
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +22,7 @@ const emit = defineEmits<{
 }>();
 
 const busy = ref(false);
+const itemCount = computed(() => Math.max(1, props.count || 1));
 
 watch(
   () => props.open,
@@ -49,9 +51,14 @@ function confirm() {
       <DialogHeader>
         <DialogTitle>确认删除</DialogTitle>
         <DialogDescription>
-          确定删除「{{
-            title || "未命名任务"
-          }}」？转写、总结和本地音频会一并删除，无法恢复。
+          <template v-if="itemCount > 1">
+            确定删除 {{ itemCount }} 个任务？转写、总结和本地音频会一并删除，无法恢复。
+          </template>
+          <template v-else>
+            确定删除「{{
+              title || "未命名任务"
+            }}」？转写、总结和本地音频会一并删除，无法恢复。
+          </template>
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>
