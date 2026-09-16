@@ -53,6 +53,7 @@ import {
 import { THEMES, applyTheme, readTheme, type ThemeId } from "../utils/theme";
 import { formatDateTime } from "../utils/time";
 import { toast } from "vue-sonner";
+import InfoTip from "../components/InfoTip.vue";
 
 const form = ref<AppSettings>({
   transcribe_base_url: "",
@@ -399,9 +400,7 @@ async function cancelDocPlugin(id: string) {
   pluginBusyId.value = id;
   try {
     const info = await api.cancelPlugin(id);
-    plugins.value = plugins.value.map((item) =>
-      item.id === id ? info : item
-    );
+    plugins.value = plugins.value.map((item) => (item.id === id ? info : item));
     await loadPlugins();
     toast.success("已取消安装");
   } catch (err) {
@@ -732,11 +731,9 @@ const highlightPhrasesText = computed({
 
 <template>
   <div>
-    <h1>设置</h1>
-    <p class="sub">
-      转写默认本机 SenseVoice。总结推荐 DeepSeek V4
-      Flash。自定义接口的协议限制在「转写与总结」。
-    </p>
+    <div class="section-title page-heading">
+      <h1>设置</h1>
+    </div>
 
     <div class="settings-tablist" role="tablist" aria-label="设置分组">
       <button
@@ -763,18 +760,30 @@ const highlightPhrasesText = computed({
       aria-labelledby="settings-tab-models"
     >
       <div class="model-block">
-        <h3>转写</h3>
-        <blockquote class="note">
-          默认走本机 SenseVoice，不需要 Base URL 和 API Key，也可改选本机
-          Whisper。选「云端 / 自定义」后，对方必须提供 OpenAI 兼容的音频转写接口
-          <code>/v1/audio/transcriptions</code>，并返回带时间戳的
-          <code>verbose_json</code> 分段，时间轴才准。
-          DeepSeek、GPT-4o、通义、Kimi
-          这类<strong>聊天模型不能用来转写</strong>。
-        </blockquote>
+        <div class="section-title">
+          <h3>转写</h3>
+          <InfoTip label="转写说明">
+            默认走本机 SenseVoice，不需要 Base URL 和 API Key，也可改选本机
+            Whisper。选「云端 / 自定义」后，对方必须提供 OpenAI
+            兼容的音频转写接口
+            <code>/v1/audio/transcriptions</code>，并返回带时间戳的
+            <code>verbose_json</code> 分段，时间轴才准。
+            DeepSeek、GPT-4o、通义、Kimi
+            这类<strong>聊天模型不能用来转写</strong>。
+          </InfoTip>
+        </div>
         <div class="grid two">
           <div class="field field-md">
-            <Label>转写模型</Label>
+            <div class="flex items-center gap-1">
+              <Label>转写模型</Label>
+              <InfoTip v-if="!localTranscribe" label="自定义转写说明">
+                三项都要填。Base URL 一般带到
+                <code>/v1</code>，模型名填对方控制台的精确 ID（如
+                whisper-1）。没填 API Key 不会走云端，会退回默认的本机
+                SenseVoice。不要填 tiny / small / large
+                等本地型号，否则仍走对应的本机 SenseVoice。
+              </InfoTip>
+            </div>
             <Select v-model="transcribeSelect">
               <SelectTrigger>
                 <SelectValue />
@@ -807,7 +816,9 @@ const highlightPhrasesText = computed({
             <Input v-model="form.transcribe_api_key" type="password" />
           </div>
           <div class="field field-sm">
-            <Label>转写线程</Label>
+            <div class="flex items-center gap-1">
+              <Label>转写线程</Label>
+            </div>
             <Select v-model="threadSelect">
               <SelectTrigger>
                 <SelectValue />
@@ -823,31 +834,20 @@ const highlightPhrasesText = computed({
             </Select>
           </div>
         </div>
-        <p v-if="localTranscribe" class="msg mt-3">
-          本地转写不使用 Base URL 和 API
-          Key，保存时会清空这两项。启动后会后台预拉 SenseVoice；Whisper
-          则在首次转写时按型号下载。本机 {{ cpuCount }} 核，默认用 80%（{{
-            defaultThreadHint
-          }}
-          路），调低风扇会小、转写变慢。
-        </p>
-        <p v-else class="msg mt-3">
-          三项都要填。Base URL 一般带到
-          <code>/v1</code>，模型名填对方控制台的精确 ID（如 whisper-1）。没填
-          API Key 不会走云端，会退回默认的本机 SenseVoice。不要填 tiny / small /
-          large 等本地型号，否则仍走对应的本机 SenseVoice。
-        </p>
       </div>
 
       <div class="model-block">
-        <h3>总结</h3>
-        <blockquote class="note">
-          填模型名、Base URL、API Key 即可接入 OpenAI 兼容的 Chat Completions。
-          DeepSeek、OpenAI、通义兼容模式、Kimi、智谱、OpenRouter、本地 Ollama /
-          vLLM 一般能用。 Claude、Gemini、Azure
-          的<strong>原生接口不支持</strong>。同一套配置也会用于 AI
-          校对和知识库对话。Base URL 通常要带到 <code>/v1</code>。
-        </blockquote>
+        <div class="section-title">
+          <h3>总结</h3>
+          <InfoTip label="总结说明">
+            填模型名、Base URL、API Key 即可接入 OpenAI 兼容的 Chat
+            Completions。
+            DeepSeek、OpenAI、通义兼容模式、Kimi、智谱、OpenRouter、本地 Ollama
+            / vLLM 一般能用。 Claude、Gemini、Azure
+            的<strong>原生接口不支持</strong>。同一套配置也会用于 AI
+            校对和知识库对话。Base URL 通常要带到 <code>/v1</code>。
+          </InfoTip>
+        </div>
         <Label>一键套用总结模型</Label>
         <div class="row mb-3.5">
           <Button
@@ -887,7 +887,13 @@ const highlightPhrasesText = computed({
             <Input v-model="form.capture_seconds" />
           </div>
           <div class="field field-sm">
-            <Label>分段并发数</Label>
+            <div class="flex items-center gap-1">
+              <Label>分段并发数</Label>
+              <InfoTip label="分段并发说明">
+                长视频会按时间切开后同时打总结模型。1 路即串行；默认 3
+                路。调太高可能触发接口限流。
+              </InfoTip>
+            </div>
             <Select v-model="concurrencySelect">
               <SelectTrigger>
                 <SelectValue />
@@ -903,37 +909,26 @@ const highlightPhrasesText = computed({
             </Select>
           </div>
         </div>
-        <p class="msg mt-3">
-          长视频会按时间切开后同时打总结模型。1 路即串行；默认 3
-          路。调太高可能触发接口限流。
-        </p>
       </div>
       <div class="check-block">
         <label class="check">
           <Checkbox v-model="form.transcribe_fast" />
-          <span>
+          <span class="flex items-center gap-1">
             快速转写（跳过过长片段的二次切开）
-            <small
-              >本机 SenseVoice
-              只跑一遍。更快更安静，长段时间轴可能更粗。关掉则过长或过稀的片段会再切再转。</small
-            >
           </span>
         </label>
         <label class="check">
           <Checkbox v-model="form.ai_proofread" />
-          <span>
+          <span class="flex items-center gap-1">
             自动任务使用 AI 校对转写（使用总结模型进行校对）
-            <small
-              >只把拼音接近词表的片段送给云端，没有候选则跳过。关掉后只保留本地词表。仍可在任务详情点「重新校对转写」。</small
-            >
+            <InfoTip label="AI 校对说明">
+              只把拼音接近词表的片段送给云端，没有候选则跳过。关掉后只保留本地词表。仍可在任务详情点「重新校对转写」。
+            </InfoTip>
           </span>
         </label>
         <label class="check">
           <Checkbox v-model="form.show_transcript" />
-          <span>
-            任务详情显示转写原文
-            <small>关掉后详情页只保留总结和时间轴，界面更干净。</small>
-          </span>
+          <span class="flex items-center gap-1"> 任务详情显示转写原文 </span>
         </label>
       </div>
       <div class="row mt-3.5">
@@ -948,11 +943,9 @@ const highlightPhrasesText = computed({
       role="tabpanel"
       aria-labelledby="settings-tab-domain"
     >
-      <h3>内容领域</h3>
-      <p class="msg mb-3">
-        决定转写提示、总结口径、知识库人设、综述高亮和转写词汇表。默认是 A
-        股盘面课；词表跟领域走，切换后两边互不影响。
-      </p>
+      <div class="section-title">
+        <h3>内容领域</h3>
+      </div>
       <div class="grid two">
         <div class="field field-md">
           <div class="flex items-center gap-1">
@@ -1076,9 +1069,11 @@ const highlightPhrasesText = computed({
                 }
               "
             />
-            <span>
+            <span class="flex items-center gap-1">
               综述里加粗股票代码、板块和公司名
-              <small>关掉后不再把 6 位数字或「某某板块」当成标的。</small>
+              <InfoTip label="综述高亮说明">
+                关掉后不再把 6 位数字或「某某板块」当成标的。
+              </InfoTip>
             </span>
           </label>
         </div>
@@ -1095,15 +1090,15 @@ const highlightPhrasesText = computed({
         >
       </div>
       <div class="lexicon-block">
-        <h3>转写词汇表</h3>
+        <div class="section-title">
+          <h3>转写词汇表</h3>
+          <InfoTip label="转写词汇表说明">
+            正确词用于拼音对齐和校对提示，替换规则用于整词替换。A
+            股预设带默认行话，通用课程默认空表。
+          </InfoTip>
+        </div>
         <p class="msg mb-3">
-          属于「{{
-            domainPack.name || "当前领域"
-          }}」。正确词用于拼音对齐和校对提示，替换规则用于整词替换。A
-          股预设带默认行话，通用课程默认空表。当前 {{ termCount }} 个正确词、{{
-            fixCount
-          }}
-          条替换{{
+          当前 {{ termCount }} 个正确词、{{ fixCount }} 条替换{{
             lexiconCustomized ? "，已按你的修改保存" : "，仍是该领域的默认词表"
           }}。
         </p>
@@ -1177,17 +1172,22 @@ const highlightPhrasesText = computed({
       </div>
       <div class="row mt-3.5">
         <Button
-          variant="outline"
+          variant="ghost"
           type="button"
+          class="h-auto px-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
           @click="showDomainAdvanced = !showDomainAdvanced"
         >
+          <ChevronRight
+            class="size-4 transition-transform"
+            :class="{ 'rotate-90': showDomainAdvanced }"
+          />
           {{ showDomainAdvanced ? "收起高级 prompt" : "高级：覆盖完整 prompt" }}
         </Button>
         <Button variant="outline" type="button" @click="resetDomainPreset"
           >恢复当前预设</Button
         >
       </div>
-      <template v-if="showDomainAdvanced">
+      <div v-show="showDomainAdvanced">
         <p class="msg mt-3">
           留空则使用引擎骨架加上面的领域规则。写满则整段替换，可能破坏 JSON
           和时间轴协议。
@@ -1210,7 +1210,7 @@ const highlightPhrasesText = computed({
           class="lex-terms"
           @input="markDomainCustom"
         />
-      </template>
+      </div>
     </section>
 
     <section
@@ -1220,13 +1220,13 @@ const highlightPhrasesText = computed({
       role="tabpanel"
       aria-labelledby="settings-tab-schedule"
     >
-      <h3>定时任务</h3>
-      <p class="msg mb-3">
-        只有打开「启用每天定时任务」并保存后，到点才会自动扫描；未开启时启动和后台都不会跑。已有相同地址的任务会跳过，失败过的也不会反复重试。通用直链不参与。Cookie
-        仍在「站点」页配置。B 站多个
-        UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
-        app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。需要立刻扫一轮时用「立即执行」。
-      </p>
+      <div class="section-title">
+        <h3>定时任务</h3>
+        <InfoTip label="定时任务说明">
+          B 站多个 UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
+          app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。需要立刻扫一轮时用「立即执行」。
+        </InfoTip>
+      </div>
       <label class="check !mb-3">
         <Checkbox v-model="schedule.enabled" />
         <span>启用每天定时任务</span>
@@ -1334,11 +1334,9 @@ const highlightPhrasesText = computed({
       role="tabpanel"
       aria-labelledby="settings-tab-plugins"
     >
-      <h3>插件</h3>
-      <p class="msg mb-3">
-        扫描 OCR 和旧版 Word 按需装到数据目录，不打进默认镜像。首次用到扫描 PDF
-        或 .doc 时也会自动安装。
-      </p>
+      <div class="section-title">
+        <h3>插件</h3>
+      </div>
       <div v-if="!plugins.length" class="msg">正在读取插件状态…</div>
       <div v-else class="plugin-grid">
         <article v-for="item in plugins" :key="item.id" class="plugin-card">
@@ -1395,8 +1393,9 @@ const highlightPhrasesText = computed({
       role="tabpanel"
       aria-labelledby="settings-tab-appearance"
     >
-      <h3>外观</h3>
-      <p class="msg mb-3">主题保存在本机浏览器，切换后立即生效。</p>
+      <div class="section-title">
+        <h3>外观</h3>
+      </div>
       <div class="theme-grid">
         <Button
           v-for="item in THEMES"

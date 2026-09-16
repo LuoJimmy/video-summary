@@ -723,9 +723,28 @@ h3 {
   padding-top: var(--space-5);
   border-top: 1px solid var(--line);
 }
-.model-block > h3 {
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: var(--space-2);
+}
+.section-title > h1,
+.section-title > h3 {
+  margin: 0;
+}
+.section-title.page-heading {
+  margin-bottom: var(--space-6);
+}
+.model-block > .section-title {
   margin: 0 0 var(--space-2);
+}
+.model-block > .section-title > h3 {
   font-size: 1rem;
+}
+.section-title .info-tip {
+  position: relative;
+  top: 0.05em;
 }
 .note {
   margin: 0 0 var(--space-4);
@@ -743,7 +762,8 @@ h3 {
   font-weight: 600;
 }
 .note code,
-.msg code {
+.msg code,
+.info-tip-text code {
   font-size: 0.75rem;
   padding: 0.05em 0.35em;
   border-radius: 4px;
@@ -1079,13 +1099,13 @@ h3 {
   position: absolute;
   top: 50%;
   left: calc(100% + 0.4rem);
-  z-index: 20;
+  z-index: 40;
   width: max-content;
-  max-width: min(18rem, 70vw);
+  max-width: min(24rem, 78vw);
   padding: 0.5rem 0.65rem;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
+  background: var(--panel-2);
   color: var(--muted);
   font-size: 0.75rem;
   font-weight: 400;
@@ -1102,12 +1122,17 @@ h3 {
     transform 0.12s ease,
     visibility 0.12s;
 }
+.info-tip.is-open .info-tip-text,
 .info-tip:hover .info-tip-text,
 .info-tip:focus .info-tip-text,
 .info-tip:focus-visible .info-tip-text {
   opacity: 1;
   visibility: visible;
   transform: translate(0, -50%);
+}
+.info-tip-text strong {
+  color: var(--text);
+  font-weight: 600;
 }
 .error {
   color: var(--bad);
@@ -1573,7 +1598,7 @@ ol.overview-list {
   padding-top: var(--space-5);
   border-top: 1px solid var(--line);
 }
-.lexicon-block > h3 {
+.lexicon-block > .section-title {
   margin: 0 0 var(--space-2);
 }
 .lex-table-wrap {

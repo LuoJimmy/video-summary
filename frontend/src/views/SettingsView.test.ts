@@ -203,11 +203,13 @@ describe("设置页模型限制说明", () => {
   it("本地转写时展示协议限制和本机说明", async () => {
     const el = await mountSettings(localSettings);
     expect(el.textContent).toContain("内容领域");
-    expect(el.textContent).toContain("A 股盘面课");
-    expect(el.textContent).toContain("词表跟领域走");
-    const notes = [...el.querySelectorAll(".note")]
+    expect(el.textContent).toContain("当前 0 个正确词");
+    expect(el.textContent).toContain("仍是该领域的默认词表");
+    const notes = [...el.querySelectorAll(".info-tip-text")]
       .map((item) => item.textContent || "")
       .join("\n");
+    expect(el.querySelectorAll(".note").length).toBe(0);
+    expect(el.querySelector(".section-title .info-tip")).toBeTruthy();
     expect(notes).toContain("/v1/audio/transcriptions");
     expect(notes).toContain("聊天模型不能用来转写");
     expect(notes).toContain("Chat Completions");
@@ -215,7 +217,6 @@ describe("设置页模型限制说明", () => {
     expect(el.textContent).toContain("分段并发数");
     expect(el.textContent).toContain("默认 3 路");
     expect(el.textContent).toContain("转写线程");
-    expect(el.textContent).toContain("默认用 80%");
     expect(el.textContent).toContain("快速转写");
     expect(el.textContent).not.toContain("不要填 tiny / small / large");
     expect(el.textContent).toContain("展开领域规则");
@@ -365,8 +366,10 @@ describe("设置页模型限制说明", () => {
         })
     );
     const el = await mountSettings(localSettings);
-    const runBtn = [...el.querySelectorAll("button")].find((item) =>
-      item.textContent?.includes("立即执行")
+    const runBtn = [...el.querySelectorAll("button")].find(
+      (item) =>
+        !item.classList.contains("info-tip") &&
+        item.textContent?.includes("立即执行")
     ) as HTMLButtonElement | undefined;
     expect(runBtn).toBeTruthy();
     runBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
