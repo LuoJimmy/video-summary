@@ -150,6 +150,13 @@ class SummaryResult(BaseModel):
     key_points: list[SummaryKeyPoint] = Field(default_factory=list)
 
 
+class JobRelatedOut(BaseModel):
+    id: str
+    title: str = ""
+    author: str = ""
+    status: str = ""
+
+
 class JobOut(BaseModel):
     id: str
     title: str
@@ -171,6 +178,8 @@ class JobOut(BaseModel):
     started_at: datetime | None = None
     source_created_at: datetime | None = None
     summarize_document: bool = False
+    schedule_log_id: str = ""
+    related_jobs: list[JobRelatedOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -358,6 +367,7 @@ class ScheduleIn(BaseModel):
     since: str = ""
     max_jobs: int = 5
     domain_id: str = ""
+    digest_enabled: bool = True
     sites: list[ScheduleSiteIn] = Field(default_factory=list)
 
 
@@ -376,6 +386,7 @@ class ScheduleOut(BaseModel):
     since: str = ""
     max_jobs: int = 5
     domain_id: str = ""
+    digest_enabled: bool = True
     sites: list[ScheduleSiteOut] = Field(default_factory=list)
 
 
@@ -396,3 +407,4 @@ class ScheduleLogOut(BaseModel):
     status: str = "ok"
     summary: str = ""
     detail: list[ScheduleLogSiteDetail] = Field(default_factory=list)
+    digest_job_id: str = ""

@@ -80,6 +80,13 @@ export type SummaryResult = {
   }>;
 };
 
+export type JobRelated = {
+  id: string;
+  title: string;
+  author: string;
+  status: string;
+};
+
 export type Job = {
   id: string;
   title: string;
@@ -101,6 +108,8 @@ export type Job = {
   started_at: string | null;
   source_created_at: string | null;
   summarize_document?: boolean;
+  schedule_log_id?: string;
+  related_jobs?: JobRelated[];
   created_at: string;
   updated_at: string;
 };
@@ -233,6 +242,7 @@ export type ScheduleConfig = {
   since: string;
   max_jobs: number;
   domain_id: string;
+  digest_enabled: boolean;
   sites: ScheduleSite[];
 };
 
@@ -253,6 +263,7 @@ export type ScheduleLog = {
   status: string;
   summary: string;
   detail: ScheduleLogDetail[];
+  digest_job_id: string;
 };
 
 export type PluginInfo = {
@@ -277,9 +288,25 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || response.statusText);
+    throw new Error(apiErrorMessage(text || response.statusText));
   }
   return response.json() as Promise<T>;
+}
+
+export function apiErrorMessage(err: unknown, fallback = "请求失败"): string {
+  const raw =
+    err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  const text = raw.trim();
+  if (!text) return fallback;
+  try {
+    const payload = JSON.parse(text) as { detail?: unknown };
+    if (typeof payload?.detail === "string" && payload.detail.trim()) {
+      return payload.detail.trim();
+    }
+  } catch {
+    /* 已是可读错误文案 */
+  }
+  return text;
 }
 
 export const api = {

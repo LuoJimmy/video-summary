@@ -43,6 +43,7 @@ const sampleSchedule = {
   since: "2026-08-01",
   max_jobs: 5,
   domain_id: "a-share",
+  digest_enabled: true,
   sites: [
     {
       site_id: "xiaoe-1",
@@ -118,6 +119,7 @@ async function mountSettings(
     status: string;
     summary: string;
     detail: unknown[];
+    digest_job_id?: string;
   }> = [],
   plugins: PluginInfo[] = samplePlugins,
   path = "/settings"
@@ -135,6 +137,7 @@ async function mountSettings(
     history: createMemoryHistory(),
     routes: [
       { path: "/settings", component: SettingsView },
+      { path: "/jobs/:id", component: { template: "<div>job</div>" } },
       {
         path: "/settings/changelog",
         component: { template: "<div>changelog</div>" },
@@ -310,12 +313,19 @@ describe("设置页模型限制说明", () => {
         status: "ok",
         summary: "小鹅通：新建 1，跳过 2",
         detail: [],
+        digest_job_id: "digest-1",
       },
     ]);
     expect(el.textContent).toContain("定时任务");
+    expect(el.textContent).toContain("生成汇总总结");
+    expect(el.textContent).toContain("查看汇总");
+    expect(
+      el.querySelector(".schedule-digest-link")?.getAttribute("href")
+    ).toBe("/jobs/digest-1?from=schedule");
     expect(el.textContent).toContain("小鹅通");
     expect(el.textContent).toContain("从哪天开始");
     expect(el.textContent).toContain("立即执行");
+    expect(el.textContent).toContain("当天发布");
     expect(el.textContent).toContain("多个 UP");
     expect(el.textContent).toContain("小鹅通：新建 1，跳过 2");
     const saveBtn = [...el.querySelectorAll("button")].find((item) =>
@@ -387,13 +397,50 @@ describe("设置页模型限制说明", () => {
       status: "partial",
       summary: "B站：跳过 1，请求过于频繁，请稍后再试",
       detail: [],
+      digest_job_id: "",
     });
     await flush();
     expect(el.textContent).toContain("请求过于频繁");
     expect(el.textContent).toContain("部分成功");
-    expect(toast.error).toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
     expect(runBtn?.disabled).toBe(false);
     expect(runBtn?.textContent).toContain("立即执行");
+  });
+
+  it("立即执行不会把上一轮日志当成这一轮结果", async () => {
+    const oldLog = {
+      id: "log-old",
+      started_at: "2026-09-10T01:00:00Z",
+      finished_at: "2026-09-10T01:00:02Z",
+      trigger: "manual",
+      status: "ok",
+      summary: "小鹅通：新建 1，跳过 2",
+      detail: [],
+      digest_job_id: "",
+    };
+    const newLog = {
+      id: "log-new",
+      started_at: "2026-09-16T10:00:00Z",
+      finished_at: "2026-09-16T10:00:08Z",
+      trigger: "manual",
+      status: "ok",
+      summary: "B站：新建 2",
+      detail: [],
+      digest_job_id: "",
+    };
+    const el = await mountSettings(localSettings, [oldLog]);
+    vi.mocked(api.runSchedule).mockResolvedValue(oldLog);
+    vi.mocked(api.scheduleLogs).mockResolvedValue([newLog, oldLog]);
+    const runBtn = [...el.querySelectorAll("button")].find(
+      (item) =>
+        !item.classList.contains("info-tip") &&
+        item.textContent?.includes("立即执行")
+    ) as HTMLButtonElement | undefined;
+    runBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    await flush();
+    expect(el.textContent).toContain("B站：新建 2");
+    expect(el.textContent).toContain("小鹅通：新建 1，跳过 2");
   });
 });
 

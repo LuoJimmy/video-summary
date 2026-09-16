@@ -662,6 +662,28 @@ h3 {
 .schedule-log-list .msg {
   margin: 0;
 }
+.schedule-digest-link,
+.digest-source-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+.schedule-digest-link:hover,
+.digest-source-link:hover {
+  text-decoration: underline;
+}
+.digest-sources {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+.digest-sources li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+}
 .row {
   display: flex;
   gap: var(--space-3);

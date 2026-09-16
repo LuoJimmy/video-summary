@@ -28,6 +28,7 @@ from app.schemas import (
 )
 from app.serializers import job_out
 from app.services.authctx import build_auth
+from app.services.digest import is_digest_source
 from app.services.domain import job_domain_id
 from app.services.document import (
     DocumentError,
@@ -206,7 +207,7 @@ def get_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
     row = db.get(Job, job_id)
     if row is None:
         raise HTTPException(404, "任务不存在")
-    return job_out(row)
+    return job_out(row, db=db)
 
 
 @router.patch("/{job_id}", response_model=JobOut)
@@ -563,7 +564,7 @@ def resummarize_job(job_id: str, background: BackgroundTasks, db: Session = Depe
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "任务不存在")
-    if not job.transcript_json:
+    if not is_digest_source(job.source_type) and not job.transcript_json:
         raise HTTPException(400, "没有转写结果，无法只重跑总结")
     clear_cancel(job.id)
     stamp_job_start(job)
@@ -574,7 +575,7 @@ def resummarize_job(job_id: str, background: BackgroundTasks, db: Session = Depe
     db.commit()
     db.refresh(job)
     background.add_task(get_pipeline().resummarize_job, job.id)
-    return job_out(job)
+    return job_out(job, db=db)
 
 
 @router.post("/{job_id}/retranscribe", response_model=JobOut)
@@ -587,6 +588,8 @@ def retranscribe_job(
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "任务不存在")
+    if is_digest_source(job.source_type):
+        raise HTTPException(400, "汇总任务不能重新转写")
     clear_cancel(job.id)
     stamp_job_start(job)
     job.status = "running"
@@ -608,6 +611,8 @@ def proofread_job(job_id: str, background: BackgroundTasks, db: Session = Depend
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "任务不存在")
+    if is_digest_source(job.source_type):
+        raise HTTPException(400, "汇总任务不能校对转写")
     if not job.transcript_json:
         raise HTTPException(400, "没有转写结果，无法校对")
     clear_cancel(job.id)

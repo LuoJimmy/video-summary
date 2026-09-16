@@ -65,6 +65,7 @@ class ScheduleLog(Base):
     status: Mapped[str] = mapped_column(String(32), default="running")
     summary: Mapped[str] = mapped_column(Text, default="")
     detail_json: Mapped[str] = mapped_column(Text, default="[]")
+    digest_job_id: Mapped[str] = mapped_column(String(32), default="")
 
 
 class AppSetting(Base):
@@ -99,6 +100,7 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     source_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     summarize_document: Mapped[bool] = mapped_column(Boolean, default=False)
+    schedule_log_id: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

@@ -1,24 +1,37 @@
 import { createApp, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "vue-sonner";
 import { api, type AppSettings, type Job } from "../api";
 import { formatDateTime } from "../utils/time";
 import JobDetailView from "./JobDetailView.vue";
 
-vi.mock("../api", () => ({
-  api: {
-    settings: vi.fn(),
-    job: vi.fn(),
-    jobMedia: vi.fn(),
-    updateJob: vi.fn(),
-    retryJob: vi.fn(),
-    cancelJob: vi.fn(),
-    resummarizeJob: vi.fn(),
-    proofreadJob: vi.fn(),
-    retranscribeJob: vi.fn(),
-    deleteJob: vi.fn(),
+vi.mock("vue-sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
   },
 }));
+
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    api: {
+      settings: vi.fn(),
+      job: vi.fn(),
+      jobMedia: vi.fn(),
+      updateJob: vi.fn(),
+      retryJob: vi.fn(),
+      cancelJob: vi.fn(),
+      resummarizeJob: vi.fn(),
+      proofreadJob: vi.fn(),
+      retranscribeJob: vi.fn(),
+      deleteJob: vi.fn(),
+    },
+  };
+});
 
 const settings: AppSettings = {
   transcribe_base_url: "",
@@ -64,6 +77,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 
 let root: HTMLElement | undefined;
 let app: ReturnType<typeof createApp> | undefined;
+let lastRouter: ReturnType<typeof createRouter> | undefined;
 
 async function flush() {
   for (let i = 0; i < 8; i++) await Promise.resolve();
@@ -76,9 +90,11 @@ async function mountDetail(path = "/jobs/job-1") {
     routes: [
       { path: "/", component: { template: "<div />" } },
       { path: "/knowledge", component: { template: "<div />" } },
+      { path: "/settings", component: { template: "<div />" } },
       { path: "/jobs/:id", component: JobDetailView },
     ],
   });
+  lastRouter = router;
   await router.push(path);
   await router.isReady();
   root = document.createElement("div");
@@ -105,6 +121,7 @@ afterEach(() => {
   root?.remove();
   app = undefined;
   root = undefined;
+  lastRouter = undefined;
   vi.useRealTimers();
   vi.clearAllMocks();
 });
@@ -506,6 +523,51 @@ describe("媒体地址覆盖", () => {
     const el = await mountDetail();
     expect(el.textContent).not.toContain("媒体地址覆盖");
   });
+
+  it("定时汇总只显示综述和原任务跳转", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({
+        title: "2026-09-16 08:00 定时汇总",
+        status: "done",
+        stage: "done",
+        progress: 100,
+        source_type: "schedule_digest",
+        source_url: "schedule://log-1",
+        media_url: "",
+        transcript: [],
+        summary: {
+          title: "两场纪律汇总",
+          overview:
+            "## 一句话总结\n**先看分时再挂单。**\n\n## 主题与核心观点\n| 维度 | 内容 |\n|---|---|\n| 主题 | 纪律 |\n| 核心观点 | 走弱才卖 |\n| 手段 | 分时 |\n\n## 论证结构\n### 一、卖票\n走弱才卖（作者甲）。\n\n## 辨立场\n纪律可操作，信息只来自讲者。",
+          chapters: [],
+          key_points: [],
+        },
+        related_jobs: [
+          {
+            id: "src-1",
+            title: "卖票课",
+            author: "作者甲",
+            status: "done",
+          },
+        ],
+      })
+    );
+    const el = await mountDetail("/jobs/job-1?from=schedule");
+    expect(el.querySelector("video.player")).toBeNull();
+    expect(el.textContent).toContain("定时汇总");
+    expect(el.textContent).toContain("原任务");
+    expect(el.textContent).toContain("卖票课");
+    expect(el.textContent).toContain("作者甲");
+    expect(el.textContent).toContain("两场纪律汇总");
+    expect(el.textContent).toContain("重新总结");
+    expect(el.textContent).not.toContain("重新转写");
+    expect(el.textContent).not.toContain("重新校对转写");
+    expect(el.textContent).not.toContain("从头重试");
+    const sourceLink = el.querySelector('a[href="/jobs/src-1?from=schedule"]');
+    expect(sourceLink?.textContent).toContain("卖票课");
+    expect(el.querySelector(".chapter-block")).toBeNull();
+    expect(el.querySelector('a[aria-label="返回定时任务"]')).not.toBeNull();
+  });
 });
 
 describe("详情返回入口", () => {
@@ -518,13 +580,27 @@ describe("详情返回入口", () => {
     expect(back?.getAttribute("href")).toBe("/");
   });
 
-  it("从知识库进入时返回知识库", async () => {
+  it("从定时任务进入时返回定时任务", async () => {
     vi.mocked(api.job).mockResolvedValue(
       makeJob({ status: "done", stage: "done", progress: 100 })
     );
-    const el = await mountDetail("/jobs/job-1?from=knowledge");
-    const back = el.querySelector('a[aria-label="返回知识库"]');
+    const el = await mountDetail("/jobs/job-1?from=schedule");
+    const back = el.querySelector('a[aria-label="返回定时任务"]');
     expect(back).not.toBeNull();
-    expect(back?.getAttribute("href")).toBe("/knowledge");
+    expect(back?.getAttribute("href")).toBe("/settings?tab=schedule");
+  });
+
+  it("任务不存在时提示并在 3 秒后返回来源页", async () => {
+    vi.mocked(api.job).mockRejectedValue(
+      new Error(JSON.stringify({ detail: "任务不存在" }))
+    );
+    await mountDetail("/jobs/gone?from=schedule");
+    expect(toast.error).toHaveBeenCalledWith("任务不存在");
+    expect(lastRouter?.currentRoute.value.path).toBe("/jobs/gone");
+    await vi.advanceTimersByTimeAsync(3000);
+    await flush();
+    expect(lastRouter?.currentRoute.value.fullPath).toBe(
+      "/settings?tab=schedule"
+    );
   });
 });

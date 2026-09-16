@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { api, type Job } from "../api";
+import { api, apiErrorMessage, type Job } from "../api";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
 import JobTitleEditor from "../components/JobTitleEditor.vue";
 import VideoPlayer from "../components/VideoPlayer.vue";
@@ -36,18 +36,34 @@ import {
   statusLabel,
 } from "../utils/time";
 import { toast } from "vue-sonner";
-import { documentPreviewKind, isDocumentSource, locatorPage, needsMediaOverrideError, publicSourceUrl, sourceTypeLabel } from "../utils/source";
+import { documentPreviewKind, isDigestSource, isDocumentSource, locatorPage, needsMediaOverrideError, publicSourceUrl, sourceTypeLabel } from "../utils/source";
 
 const route = useRoute();
 const router = useRouter();
-const fromKnowledge = computed(() => {
+const fromSource = computed(() => {
   const raw = route.query.from;
-  return (Array.isArray(raw) ? raw[0] : raw) === "knowledge";
+  return String(Array.isArray(raw) ? raw[0] : raw || "");
 });
-const backTo = computed(() => (fromKnowledge.value ? "/knowledge" : "/"));
-const backLabel = computed(() =>
-  fromKnowledge.value ? "返回知识库" : "返回任务列表"
-);
+const fromKnowledge = computed(() => fromSource.value === "knowledge");
+const fromSchedule = computed(() => fromSource.value === "schedule");
+const backTo = computed(() => {
+  if (fromKnowledge.value) return "/knowledge";
+  if (fromSchedule.value) return { path: "/settings", query: { tab: "schedule" } };
+  return "/";
+});
+const backLabel = computed(() => {
+  if (fromKnowledge.value) return "返回知识库";
+  if (fromSchedule.value) return "返回定时任务";
+  return "返回任务列表";
+});
+const missingJob = ref(false);
+let missingTimer: number | undefined;
+
+function jobLink(id: string) {
+  if (fromSchedule.value) return `/jobs/${id}?from=schedule`;
+  if (fromKnowledge.value) return `/jobs/${id}?from=knowledge`;
+  return `/jobs/${id}`;
+}
 const job = ref<Job | null>(null);
 const player = ref<{ seek: (n: number) => void } | null>(null);
 const askingDelete = ref(false);
@@ -62,12 +78,15 @@ const hasTranscript = computed(() => Boolean(job.value?.transcript.length));
 const isDocument = computed(() =>
   isDocumentSource(job.value?.source_type)
 );
+const isDigest = computed(() => isDigestSource(job.value?.source_type));
+const relatedJobs = computed(() => job.value?.related_jobs || []);
 const overviewHtml = computed(() =>
   formatOverviewDocument(job.value?.summary?.overview || "", {
-    seekableClocks: !isDocument.value,
+    seekableClocks: !isDocument.value && !isDigest.value,
   })
 );
 const showChapterBlocks = computed(() => {
+  if (isDigest.value) return false;
   if (isDocument.value) return true;
   return !overviewIsStructured(job.value?.summary?.overview || "");
 });
@@ -80,7 +99,7 @@ const jobBusy = computed(() =>
   Boolean(job.value && isJobActive(job.value.status))
 );
 const playerSrc = computed(() => {
-  if (isDocument.value) return "";
+  if (isDocument.value || isDigest.value) return "";
   return playSrc.value || playbackSrcFromJob(job.value);
 });
 const documentFileSrc = computed(() => {
@@ -101,6 +120,9 @@ const elapsedLabel = computed(() => {
 });
 const sourceMeta = computed(() => {
   if (!job.value) return "";
+  if (isDigest.value) {
+    return formatDateTime(job.value.started_at || job.value.created_at);
+  }
   return [
     formatDateTime(job.value.source_created_at),
     job.value.author?.trim(),
@@ -116,10 +138,14 @@ const canRetrySteps = computed(() => {
 const canReuseTranscript = computed(() =>
   Boolean(hasTranscript.value && canRetrySteps.value)
 );
+const canResummarize = computed(() =>
+  Boolean(canRetrySteps.value && (isDigest.value || canReuseTranscript.value))
+);
 const showMediaOverride = computed(
   () =>
-    Boolean(mediaOverride.value.trim()) ||
-    needsMediaOverrideError(job.value?.error)
+    !isDigest.value &&
+    (Boolean(mediaOverride.value.trim()) ||
+      needsMediaOverrideError(job.value?.error))
 );
 const timingRows = computed(() => {
   const timing = job.value?.timing || {};
@@ -185,12 +211,26 @@ function assignPlaySrc(next: string, hint = "") {
 }
 
 async function load() {
-  job.value = await api.job(String(route.params.id));
-  applyJobHighlight(job.value);
+  if (missingJob.value) return;
+  try {
+    job.value = await api.job(String(route.params.id));
+    applyJobHighlight(job.value);
+  } catch (err) {
+    missingJob.value = true;
+    if (timer) {
+      window.clearInterval(timer);
+      timer = undefined;
+    }
+    toast.error(apiErrorMessage(err, "任务不存在"));
+    if (missingTimer) window.clearTimeout(missingTimer);
+    missingTimer = window.setTimeout(() => {
+      void router.replace(backTo.value);
+    }, 3000);
+  }
 }
 
 async function refreshPlayback() {
-  if (!job.value || isDocument.value) {
+  if (!job.value || isDocument.value || isDigest.value) {
     assignPlaySrc("");
     return;
   }
@@ -420,6 +460,7 @@ watch(
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer);
   if (clock !== undefined) window.clearInterval(clock);
+  if (missingTimer) window.clearTimeout(missingTimer);
 });
 </script>
 
@@ -458,25 +499,30 @@ onBeforeUnmount(() => {
           @click="cancel"
           >取消任务</Button
         >
-        <Button v-if="canRetrySteps" type="button" @click="retranscribe">{{
-          isDocument ? "重新提取" : "重新转写"
-        }}</Button>
         <Button
-          v-if="canReuseTranscript && !isDocument"
+          v-if="canRetrySteps && !isDigest"
+          type="button"
+          @click="retranscribe"
+          >{{ isDocument ? "重新提取" : "重新转写" }}</Button
+        >
+        <Button
+          v-if="canReuseTranscript && !isDocument && !isDigest"
           variant="outline"
           type="button"
           @click="proofread"
           >重新校对转写</Button
         >
         <Button
-          v-if="canReuseTranscript"
+          v-if="canResummarize"
           variant="outline"
           type="button"
           @click="resummarize"
           >{{ job.summary ? "重新总结" : "生成总结" }}</Button
         >
         <Button
-          v-if="job.status === 'failed' || job.status === 'cancelled'"
+          v-if="
+            !isDigest && (job.status === 'failed' || job.status === 'cancelled')
+          "
           variant="outline"
           type="button"
           @click="retry"
@@ -596,7 +642,10 @@ onBeforeUnmount(() => {
           </ul>
         </div>
       </template>
-      <div v-if="job.summary.key_points.length" class="chapter-block">
+      <div
+        v-if="!isDigest && job.summary.key_points.length"
+        class="chapter-block"
+      >
         <h3>关键定位</h3>
         <p
           v-for="(point, index) in job.summary.key_points"
@@ -614,6 +663,18 @@ onBeforeUnmount(() => {
           <span>{{ point.text }}</span>
         </p>
       </div>
+    </section>
+
+    <section v-if="isDigest && relatedJobs.length" class="card">
+      <h3>原任务</h3>
+      <ul class="digest-sources">
+        <li v-for="item in relatedJobs" :key="item.id">
+          <router-link class="digest-source-link" :to="jobLink(item.id)">{{
+            item.title || "未命名任务"
+          }}</router-link>
+          <span class="msg">{{ item.author?.trim() || "未署名" }}</span>
+        </li>
+      </ul>
     </section>
 
     <section v-if="showTranscript && job.transcript.length" class="card">

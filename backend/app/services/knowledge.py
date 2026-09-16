@@ -5,6 +5,7 @@ from sqlalchemy import or_
 
 from app.models import Job
 from app.schemas import AppSettingsOut, KnowledgeDoc, KnowledgeHit, KnowledgeSearchOut
+from app.services.digest import DIGEST_SOURCE, is_digest_source
 from app.services.domain import DEFAULT_DOMAIN_ID, knowledge_system, pack_by_id, stored_job_domain
 from app.services.httpclient import create_chat_completion, openai_client
 from app.services.jsonutil import coerce_model_text, loads
@@ -70,6 +71,16 @@ def knowledge_jobs_filter(query, domain_id: str | None):
     return query.filter(Job.domain_id == target)
 
 
+def job_has_knowledge_text(job: Job) -> bool:
+    if is_digest_source(job.source_type):
+        return False
+    return bool((job.transcript_json or "").strip())
+
+
+def knowledge_content_filter(query):
+    return query.filter(Job.transcript_json != "").filter(Job.source_type != DIGEST_SOURCE)
+
+
 def search_knowledge(
     jobs: list[Job],
     query: str = "",
@@ -77,7 +88,7 @@ def search_knowledge(
     page_size: int = 20,
     total: int | None = None,
 ) -> KnowledgeSearchOut:
-    documents = [_doc(job) for job in jobs if (job.transcript_json or "").strip()]
+    documents = [_doc(job) for job in jobs if job_has_knowledge_text(job)]
     query = to_simplified(query).strip()
     page = max(1, int(page or 1))
     page_size = min(100, max(1, int(page_size or 20)))
@@ -123,7 +134,7 @@ def retrieve(jobs: list[Job], query: str, limit: int = MAX_CHAT_CHUNKS) -> list[
     terms = _terms(query)
     ranked: list[_Chunk] = []
     for job in jobs:
-        if not (job.transcript_json or "").strip():
+        if not job_has_knowledge_text(job):
             continue
         for chunk in _chunks_for_job(job):
             chunk.score = _score(chunk.text, chunk.title, query, terms)
@@ -217,7 +228,7 @@ def _doc(job: Job) -> KnowledgeDoc:
     return KnowledgeDoc(
         job_id=job.id,
         title=job.title or "未命名任务",
-        source_url=job.source_url,
+        source_url=job.source_url or "",
         status=job.status,
         segment_count=len(segments) if isinstance(segments, list) else 0,
         updated_at=job.updated_at,

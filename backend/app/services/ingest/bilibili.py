@@ -418,7 +418,7 @@ class BilibiliAdapter(SiteAdapter):
                     if limited:
                         if items:
                             truncated = True
-                            message = "稿件列表被限流，已保留已拉到的条目；稍后可继续。"
+                            message = "稿件列表被限流，已保留已拉到的条目。请等几分钟再试，或到站点页填写 Cookie 保持登录态。"
                             next_cursor = encode_catalog_cursor(
                                 {"pn": pn, "tid": tid, "tids": pending_tids, "seen": sorted(seen)}
                             )
@@ -428,7 +428,7 @@ class BilibiliAdapter(SiteAdapter):
                                 truncated=True,
                                 message=message,
                             )
-                        raise CatalogError("稿件列表被限流，请等几分钟再试")
+                        raise CatalogError("稿件列表被限流，请等几分钟再试；也可到站点页填写 Cookie 保持登录态")
                     if payload.get("code") != 0:
                         raise CatalogError(str(payload.get("message") or "B站稿件列表接口失败"))
                     data = payload.get("data") or {}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   api,
@@ -89,6 +89,7 @@ const schedule = ref<ScheduleConfig>({
   since: "",
   max_jobs: 5,
   domain_id: "a-share",
+  digest_enabled: true,
   sites: [],
 });
 const scheduleLogs = ref<ScheduleLog[]>([]);
@@ -125,6 +126,13 @@ function settingsTabFromQuery(raw: unknown): SettingsTab {
 }
 
 const settingsTab = ref<SettingsTab>(settingsTabFromQuery(route.query.tab));
+
+watch(
+  () => route.query.tab,
+  (raw) => {
+    settingsTab.value = settingsTabFromQuery(raw);
+  }
+);
 
 function selectSettingsTab(id: SettingsTab) {
   settingsTab.value = id;
@@ -448,6 +456,11 @@ async function runScheduleNow() {
   if (runningSchedule.value) return;
   runningSchedule.value = true;
   runWatching = true;
+  const knownIds = new Set(
+    scheduleLogs.value
+      .map((item) => item.id)
+      .filter((id) => id && id !== PENDING_RUN_ID)
+  );
   const pending: ScheduleLog = {
     id: PENDING_RUN_ID,
     started_at: new Date().toISOString(),
@@ -456,6 +469,7 @@ async function runScheduleNow() {
     status: "running",
     summary: "正在扫描站点…",
     detail: [],
+    digest_job_id: "",
   };
   scheduleLogs.value = [
     pending,
@@ -464,22 +478,29 @@ async function runScheduleNow() {
   await nextTick();
   try {
     let log = await api.runSchedule();
-    upsertScheduleLog(log);
+    let logIsNew = Boolean(log?.id) && log.id !== PENDING_RUN_ID && !knownIds.has(log.id);
+    if (logIsNew) upsertScheduleLog(log);
     const started = Date.now();
-    while (
-      log.status === "running" &&
-      runWatching &&
-      Date.now() - started < 180000
-    ) {
-      await sleep(500);
-      if (!runWatching) return;
+    while (runWatching && Date.now() - started < 180000) {
+      if (logIsNew && log.status !== "running") break;
       const logs = await api.scheduleLogs();
-      scheduleLogs.value = logs;
-      log = logs.find((item) => item.id === log.id) || logs[0] || log;
+      const incoming =
+        logs.find((item) => item.status === "running" && item.id !== PENDING_RUN_ID) ||
+        logs.find((item) => item.id && !knownIds.has(item.id));
+      if (incoming) {
+        scheduleLogs.value = logs;
+        log = incoming;
+        logIsNew = true;
+        if (incoming.status !== "running") break;
+      }
+      await sleep(500);
     }
     if (!runWatching) return;
-    if (log.status === "running") {
+    if (!logIsNew || log.status === "running") {
       toast.error("仍在扫描，请稍后查看日志");
+      return;
+    }
+    if (isBiliRateLimitSummary(log.summary)) {
       return;
     }
     if (log.status === "failed") {
@@ -510,6 +531,11 @@ function upsertScheduleLog(log: ScheduleLog) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isBiliRateLimitSummary(summary: string) {
+  const text = summary || "";
+  return /限流|过于频繁|请等几分钟/.test(text);
 }
 
 function askClearLogs() {
@@ -1223,13 +1249,17 @@ const highlightPhrasesText = computed({
       <div class="section-title">
         <h3>定时任务</h3>
         <InfoTip label="定时任务说明">
-          B 站多个 UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
+          每天只拉取当天发布的内容，不会用更早的稿件凑满数量。B 站多个 UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
           app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。需要立刻扫一轮时用「立即执行」。
         </InfoTip>
       </div>
       <label class="check !mb-3">
         <Checkbox v-model="schedule.enabled" />
         <span>启用每天定时任务</span>
+      </label>
+      <label class="check !mb-3">
+        <Checkbox v-model="schedule.digest_enabled" />
+        <span>生成汇总总结</span>
       </label>
       <div class="grid two">
         <div class="field field-sm">
@@ -1321,6 +1351,13 @@ const highlightPhrasesText = computed({
                 >
               </div>
               <p>{{ item.summary }}</p>
+              <p v-if="item.digest_job_id" class="mt-1">
+                <router-link
+                  class="schedule-digest-link"
+                  :to="`/jobs/${item.digest_job_id}?from=schedule`"
+                  >查看汇总</router-link
+                >
+              </p>
             </li>
           </ul>
         </div>

@@ -35,6 +35,7 @@ DEFAULT_MAX_JOBS = 5
 MAX_JOBS_LIMIT = 20
 BILI_CATALOG_PAUSE = 2.0
 DISABLED_WAIT = 3600.0
+BILI_RATE_LIMIT_KEEP = "后续稿件列表被限流，已保留已拉到的条目。请等几分钟再试，或到站点页填写 Cookie 保持登录态"
 
 _stop = threading.Event()
 _wake = threading.Event()
@@ -81,6 +82,39 @@ def parse_since_date(value: str) -> datetime | None:
     except ValueError as exc:
         raise ValueError("起始日期格式应为 YYYY-MM-DD") from exc
     return local.astimezone(timezone.utc)
+
+
+def shanghai_today_start(now: datetime | None = None) -> datetime:
+    local = (now or datetime.now(tz=SHANGHAI)).astimezone(SHANGHAI)
+    return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def effective_schedule_since(since_text: str, now: datetime | None = None) -> datetime:
+    """定时扫描的下限：默认当天 0 点；配置更早则仍只拉当天，更晚则等到那一天。"""
+    today = shanghai_today_start(now)
+    configured = parse_since_date(since_text) if (since_text or "").strip() else None
+    if configured is None:
+        return today
+    stamp = ensure_utc(configured)
+    return stamp if stamp > today else today
+
+
+def _schedule_site_error(
+    error: str,
+    *,
+    created: int,
+    listed: int,
+    skipped: int,
+    quota_filled: bool,
+) -> str:
+    text = (error or "").strip()
+    if not text or not is_bili_rate_limited(message=text):
+        return text
+    if quota_filled:
+        return ""
+    if created or listed or skipped:
+        return BILI_RATE_LIMIT_KEEP
+    return text
 
 
 def parse_max_jobs(value: object, default: int = DEFAULT_MAX_JOBS) -> int:
@@ -164,6 +198,7 @@ def load_schedule(db: Session) -> ScheduleOut:
         since=since,
         max_jobs=parse_max_jobs(_setting(db, "schedule_max_jobs", str(DEFAULT_MAX_JOBS))),
         domain_id=domain_id,
+        digest_enabled=parse_flag(_setting(db, "schedule_digest_enabled", "1"), True),
         sites=sites,
     )
 
@@ -194,6 +229,7 @@ def save_schedule(db: Session, payload: ScheduleIn) -> ScheduleOut:
     _put_setting(db, "schedule_since", since)
     _put_setting(db, "schedule_max_jobs", str(parse_max_jobs(payload.max_jobs)))
     _put_setting(db, "schedule_domain_id", (payload.domain_id or "").strip())
+    _put_setting(db, "schedule_digest_enabled", "1" if payload.digest_enabled else "0")
     db.commit()
     wake_scheduler()
     return load_schedule(db)
@@ -359,6 +395,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
     if db is None:
         db = SessionLocal()
     created_ids: list[str] = []
+    digest_log_id: str | None = None
     try:
         with _run_lock:
             cfg = load_schedule(db)
@@ -371,7 +408,8 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                 if local < scheduled_today:
                     raise ValueError("未到今天的定时时间")
                 raise ValueError("今日已执行过定时任务")
-            since = parse_since_date(cfg.since) if cfg.since else None
+            since = effective_schedule_since(cfg.since)
+            today = _shanghai_day(datetime.now(tz=SHANGHAI))
             remaining = cfg.max_jobs
             domain_id = job_domain_id(cfg.domain_id)
             existing = _existing_catalog(db)
@@ -409,16 +447,27 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                     if index and site.adapter == "bilibili" and BILI_CATALOG_PAUSE:
                         time.sleep(BILI_CATALOG_PAUSE)
                     try:
-                        items.extend(list_catalog(site.adapter, auth, catalog_id, since=since))
+                        page = list_catalog(site.adapter, auth, catalog_id, since=since)
+                        items.extend(page)
+                        note = str(getattr(page, "message", "") or "").strip()
+                        if note:
+                            errors.append(note)
+                            if site.adapter == "bilibili" and is_bili_rate_limited(message=note):
+                                break
                     except CatalogError as exc:
                         errors.append(str(exc))
                         if site.adapter == "bilibili" and is_bili_rate_limited(message=str(exc)):
                             break
                     except Exception as exc:
                         errors.append(str(exc))
-                if errors:
-                    detail["error"] = _join_unique(errors)
                 if not items and errors:
+                    detail["error"] = _schedule_site_error(
+                        _join_unique(errors),
+                        created=0,
+                        listed=0,
+                        skipped=0,
+                        quota_filled=remaining <= 0,
+                    )
                     details.append(detail)
                     continue
                 ranked = _sort_items(items)
@@ -427,7 +476,9 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                     url = (item.source_url or "").strip()
                     if not url:
                         continue
-                    if since is not None and item.created_at is not None and ensure_utc(item.created_at) < ensure_utc(since):
+                    if item.created_at is None or _shanghai_day(item.created_at) != today:
+                        continue
+                    if ensure_utc(item.created_at) < ensure_utc(since):
                         continue
                     if catalog_item_exists(existing, url, item.title, item.created_at):
                         detail["skipped"] += 1
@@ -446,6 +497,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                         status="pending",
                         stage="queued",
                         source_created_at=naive_utc(item.created_at),
+                        schedule_log_id=log.id,
                     )
                     stamp_job_start(job)
                     db.add(job)
@@ -458,6 +510,13 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                     created_total += 1
                     if remaining <= 0:
                         quota_left = False
+                detail["error"] = _schedule_site_error(
+                    _join_unique(errors) if errors else "",
+                    created=detail["created"],
+                    listed=detail["listed"],
+                    skipped=detail["skipped"],
+                    quota_filled=remaining <= 0,
+                )
                 details.append(detail)
 
             summary, status = _build_summary(details, created_total, skipped_total)
@@ -468,25 +527,38 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
             db.commit()
             db.refresh(log)
             result = schedule_log_out(log)
+            if cfg.digest_enabled:
+                digest_log_id = log.id
     finally:
         if own_session:
             db.close()
     if execute:
-        _execute_jobs(created_ids)
+        _execute_jobs(created_ids, digest_log_id=digest_log_id)
     return result
 
 
-def _execute_jobs(job_ids: list[str]) -> None:
+def _run_created_jobs(job_ids: list[str], digest_log_id: str | None = None) -> None:
+    for job_id in job_ids:
+        try:
+            get_pipeline().run_job(job_id)
+        except Exception:
+            continue
+    if digest_log_id:
+        try:
+            from app.services.digest import run_schedule_digest
+
+            run_schedule_digest(digest_log_id)
+        except Exception:
+            return
+
+
+def _execute_jobs(job_ids: list[str], digest_log_id: str | None = None) -> None:
     if not job_ids:
         return
 
     def worker() -> None:
         with _exec_lock:
-            for job_id in job_ids:
-                try:
-                    get_pipeline().run_job(job_id)
-                except Exception:
-                    continue
+            _run_created_jobs(job_ids, digest_log_id=digest_log_id)
 
     thread = threading.Thread(target=worker, name="schedule-exec", daemon=True)
     thread.start()
@@ -564,6 +636,12 @@ def start_detached_run(trigger: str = "manual") -> ScheduleLogOut:
         )
         if running is not None:
             return schedule_log_out(running)
+        previous = (
+            db.query(ScheduleLog)
+            .order_by(ScheduleLog.started_at.desc(), ScheduleLog.id.desc())
+            .first()
+        )
+        previous_id = previous.id if previous else ""
     finally:
         db.close()
 
@@ -573,13 +651,21 @@ def start_detached_run(trigger: str = "manual") -> ScheduleLogOut:
     while time.time() < deadline:
         db = SessionLocal()
         try:
+            running = (
+                db.query(ScheduleLog)
+                .filter(ScheduleLog.finished_at.is_(None))
+                .order_by(ScheduleLog.started_at.desc(), ScheduleLog.id.desc())
+                .first()
+            )
+            if running is not None:
+                return schedule_log_out(running)
             row = (
                 db.query(ScheduleLog)
                 .filter(ScheduleLog.trigger == trigger)
                 .order_by(ScheduleLog.started_at.desc(), ScheduleLog.id.desc())
                 .first()
             )
-            if row is not None:
+            if row is not None and row.id != previous_id:
                 return schedule_log_out(row)
         finally:
             db.close()

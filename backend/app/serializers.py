@@ -1,5 +1,7 @@
+from sqlalchemy.orm import Session
+
 from app.models import AuthProfile, Job, ScheduleLog, Site
-from app.schemas import AuthProfileOut, JobOut, ScheduleLogOut, ScheduleLogSiteDetail, SiteOut, SummaryResult, TranscriptSegment
+from app.schemas import AuthProfileOut, JobOut, JobRelatedOut, ScheduleLogOut, ScheduleLogSiteDetail, SiteOut, SummaryResult, TranscriptSegment
 from app.services.jsonutil import loads
 
 
@@ -31,9 +33,10 @@ def site_out(row: Site) -> SiteOut:
     )
 
 
-def job_out(row: Job, *, brief: bool = False) -> JobOut:
+def job_out(row: Job, *, brief: bool = False, db: Session | None = None) -> JobOut:
     transcript: list[TranscriptSegment] = []
     summary = None
+    related: list[JobRelatedOut] = []
     if not brief:
         transcript_raw = loads(row.transcript_json, [])
         transcript = [TranscriptSegment.model_validate(item) for item in transcript_raw] if transcript_raw else []
@@ -42,6 +45,10 @@ def job_out(row: Job, *, brief: bool = False) -> JobOut:
                 summary = SummaryResult.model_validate(loads(row.summary_json, {}))
             except Exception:
                 summary = None
+        if db is not None:
+            from app.services.digest import related_job_refs
+
+            related = related_job_refs(db, row)
     return JobOut(
         id=row.id,
         title=row.title,
@@ -63,6 +70,8 @@ def job_out(row: Job, *, brief: bool = False) -> JobOut:
         started_at=getattr(row, "started_at", None),
         source_created_at=getattr(row, "source_created_at", None),
         summarize_document=bool(getattr(row, "summarize_document", False)),
+        schedule_log_id=getattr(row, "schedule_log_id", "") or "",
+        related_jobs=related,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -83,4 +92,5 @@ def schedule_log_out(row: ScheduleLog) -> ScheduleLogOut:
         status=row.status,
         summary=row.summary,
         detail=detail,
+        digest_job_id=getattr(row, "digest_job_id", "") or "",
     )

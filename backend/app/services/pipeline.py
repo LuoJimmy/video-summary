@@ -89,6 +89,16 @@ class Pipeline:
                     raise_if_cancelled()
                     if job.status == "cancelled":
                         return
+                    from app.services.digest import fill_digest_job, is_digest_source
+
+                    if is_digest_source(job.source_type):
+                        timer = StageTimer()
+                        timer.start("summarizing")
+                        self._update(db, job, status="running", stage="summarizing", progress=80, error="")
+                        fill_digest_job(db, job)
+                        timer.stop("summarizing")
+                        self._update(db, job, timing_json=dumps(timer.payload()))
+                        return
                     raw = loads(job.transcript_json, [])
                     if not raw:
                         raise SummarizeError("没有转写结果，无法只重跑总结")
@@ -204,6 +214,10 @@ class Pipeline:
                     raise_if_cancelled()
                     if job.status == "cancelled":
                         return
+                    from app.services.digest import is_digest_source
+
+                    if is_digest_source(job.source_type):
+                        raise RuntimeError("汇总任务不能重新转写")
                     if is_document_source(job.source_type):
                         timer = StageTimer()
                         self._extract_and_maybe_summarize_document(db, job, timer, continue_after=continue_after)
@@ -433,6 +447,12 @@ class Pipeline:
         try:
             raise_if_cancelled()
             if job.status == "cancelled":
+                return
+            from app.services.digest import fill_digest_job, is_digest_source
+
+            if is_digest_source(job.source_type):
+                self._update(db, job, status="running", stage="summarizing", progress=80, error="")
+                fill_digest_job(db, job)
                 return
             timer = StageTimer()
             timer.start("resolving")

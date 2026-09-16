@@ -97,3 +97,29 @@ def test_retrieve_document_uses_locator_not_clock():
     context = _format_context(hits)
     assert "第3页" in context
     assert "00:00" not in context
+
+
+def test_digest_job_is_excluded_from_knowledge():
+    digest = Job(
+        id="digest1",
+        title="2026-09-16 08:00 定时汇总",
+        status="done",
+        source_type="schedule_digest",
+        source_url="",
+        transcript_json="",
+        summary_json=dumps(
+            {
+                "title": "定时汇总",
+                "overview": "低吸要等收敛，卖票先看分时走弱",
+                "chapters": [],
+                "key_points": [],
+            }
+        ),
+    )
+    source = _job()
+    listed = search_knowledge([digest, source])
+    assert [item.job_id for item in listed.documents] == ["job1"]
+    assert retrieve([digest, source], "低吸收敛", limit=5) == []
+    hits = retrieve([digest, source], "卖票", limit=5)
+    assert hits
+    assert all(item.job_id != "digest1" for item in hits)

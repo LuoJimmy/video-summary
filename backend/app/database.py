@@ -41,3 +41,8 @@ def migrate_job_columns() -> None:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN author VARCHAR(120) DEFAULT ''"))
         if "summarize_document" not in names:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN summarize_document BOOLEAN DEFAULT 0"))
+        if "schedule_log_id" not in names:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN schedule_log_id VARCHAR(32) DEFAULT ''"))
+        log_names = {row[1] for row in conn.execute(text("PRAGMA table_info(schedule_logs)")).fetchall()}
+        if log_names and "digest_job_id" not in log_names:
+            conn.execute(text("ALTER TABLE schedule_logs ADD COLUMN digest_job_id VARCHAR(32) DEFAULT ''"))

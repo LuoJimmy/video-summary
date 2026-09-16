@@ -73,3 +73,4 @@ def test_migrate_job_columns_adds_timing(tmp_path, monkeypatch):
     assert "domain_id" in names
     assert "author" in names
     assert "summarize_document" in names
+    assert "schedule_log_id" in names

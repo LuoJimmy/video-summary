@@ -16,6 +16,7 @@ from app.services.knowledge import (
     KnowledgeError,
     answer_from_knowledge,
     jobs_in_domain,
+    knowledge_content_filter,
     knowledge_jobs_filter,
     search_knowledge,
 )
@@ -32,11 +33,11 @@ router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 
 def _jobs(db: Session) -> list[Job]:
-    return db.query(Job).filter(Job.transcript_json != "").order_by(Job.updated_at.desc()).all()
+    return knowledge_content_filter(db.query(Job)).order_by(Job.updated_at.desc()).all()
 
 
 def _listed_jobs_query(db: Session, domain_id: str):
-    return knowledge_jobs_filter(db.query(Job).filter(Job.transcript_json != ""), domain_id)
+    return knowledge_jobs_filter(knowledge_content_filter(db.query(Job)), domain_id)
 
 
 @router.get("", response_model=KnowledgeSearchOut)

@@ -8,6 +8,10 @@ export function isDocumentSource(sourceType: string | null | undefined): boolean
   return DOCUMENT_SOURCE_TYPES.has(sourceType || "");
 }
 
+export function isDigestSource(sourceType: string | null | undefined): boolean {
+  return (sourceType || "") === "schedule_digest";
+}
+
 export function sourceTypeLabel(sourceType: string | null | undefined): string {
   const labels: Record<string, string> = {
     local_file: "本地媒体",
@@ -20,6 +24,7 @@ export function sourceTypeLabel(sourceType: string | null | undefined): string {
     page: "页面",
     live: "直播",
     catalog: "目录",
+    schedule_digest: "定时汇总",
   };
   const raw = (sourceType || "").trim();
   return labels[raw] || raw || "未知类型";

@@ -3,6 +3,7 @@ import {
   documentPreviewKind,
   isCatalogSourceUrl,
   isDocumentSource,
+  isDigestSource,
   locatorPage,
   needsMediaOverrideError,
   parseSourceUrls,
@@ -21,6 +22,9 @@ describe("source helpers", () => {
     expect(sourceTypeLabel("local_document")).toBe("本地文档");
     expect(sourceTypeLabel("http_document")).toBe("在线文档");
     expect(sourceTypeLabel("web_page")).toBe("网页");
+    expect(sourceTypeLabel("schedule_digest")).toBe("定时汇总");
+    expect(isDigestSource("schedule_digest")).toBe(true);
+    expect(isDigestSource("page")).toBe(false);
   });
 
   it("从 locator 解析页码并判断预览类型", () => {

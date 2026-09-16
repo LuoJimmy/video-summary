@@ -1,10 +1,17 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from app.models import Job
+from sqlalchemy.orm import sessionmaker
+
+from app.models import Job, ScheduleLog, utcnow
 from app.schemas import ScheduleIn, ScheduleSiteIn
 from app.services.ingest.base import CatalogItem
 from app.services.schedule import load_schedule, missed_scheduled_run, seconds_until_tick
 from app.services.sourcetime import SHANGHAI
+
+
+def _published(days: int = 0, hour: int = 12) -> datetime:
+    local = datetime.now(SHANGHAI).replace(hour=hour, minute=0, second=0, microsecond=0)
+    return (local + timedelta(days=days)).astimezone(timezone.utc)
 
 
 def _sites_by_adapter(client) -> dict:
@@ -36,6 +43,7 @@ def test_schedule_default_and_validation(client):
     assert data["enabled"] is False
     assert data["time"] == "08:00"
     assert data["max_jobs"] == 5
+    assert data["digest_enabled"] is True
     adapters = {item["adapter"] for item in data["sites"]}
     assert adapters == {"xiaoe", "yueniu", "bilibili"}
     assert "generic" not in adapters
@@ -75,12 +83,12 @@ def test_schedule_skips_existing_url(client, db_session, monkeypatch):
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo",
                 title="旧课",
-                created_at=datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc),
+                created_at=_published(),
             ),
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_new?app_id=appdemo",
                 title="新课",
-                created_at=datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc),
+                created_at=_published(),
             ),
         ]
 
@@ -176,7 +184,7 @@ def test_schedule_skips_xiaoe_short_link_by_title_date(client, db_session, monke
         Job(
             title="9.10行情梳理",
             source_url="https://etrsz.xetslk.com/sl/3NFDU8",
-            source_created_at=datetime(2026, 9, 10, 11, 30),
+            source_created_at=_published().replace(tzinfo=None),
             site_id=xiaoe["id"],
             status="done",
             stage="done",
@@ -189,12 +197,12 @@ def test_schedule_skips_xiaoe_short_link_by_title_date(client, db_session, monke
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo",
                 title="9.10行情梳理",
-                created_at=datetime(2026, 9, 10, 11, 30, tzinfo=timezone.utc),
+                created_at=_published(),
             ),
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_new?app_id=appdemo",
-                title="9.15行情梳理",
-                created_at=datetime(2026, 9, 15, 11, 30, tzinfo=timezone.utc),
+                title="9.15卖票方法",
+                created_at=_published(),
             ),
         ]
 
@@ -208,6 +216,16 @@ def test_schedule_skips_xiaoe_short_link_by_title_date(client, db_session, monke
     assert "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo" not in urls
 
 
+def test_effective_schedule_since_clamps_to_today():
+    from app.services.schedule import effective_schedule_since, shanghai_today_start
+
+    now = datetime(2026, 9, 16, 18, 0, tzinfo=SHANGHAI)
+    today = shanghai_today_start(now)
+    assert effective_schedule_since("", now) == today
+    assert effective_schedule_since("2026-08-01", now) == today
+    assert effective_schedule_since("2026-09-20", now) > today
+
+
 def test_schedule_since_and_max_jobs(client, monkeypatch):
     _enable_xiaoe(client, max_jobs=1, since="2026-08-13")
 
@@ -215,18 +233,18 @@ def test_schedule_since_and_max_jobs(client, monkeypatch):
         return [
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_new?app_id=appdemo",
-                title="新",
-                created_at=datetime(2026, 8, 14, 4, 0, tzinfo=timezone.utc),
+                title="晚",
+                created_at=_published(hour=20),
             ),
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_mid?app_id=appdemo",
-                title="中",
-                created_at=datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc),
+                title="早",
+                created_at=_published(hour=8),
             ),
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo",
-                title="旧",
-                created_at=datetime(2026, 8, 1, 4, 0, tzinfo=timezone.utc),
+                title="昨天",
+                created_at=_published(-1),
             ),
         ]
 
@@ -234,7 +252,32 @@ def test_schedule_since_and_max_jobs(client, monkeypatch):
     log = client.post("/api/schedule/run").json()
     assert log["detail"][0]["created"] == 1
     jobs = client.get("/api/jobs").json()["items"]
-    assert [item["title"] for item in jobs] == ["新"]
+    assert [item["title"] for item in jobs] == ["晚"]
+
+
+def test_schedule_only_creates_today_jobs(client, monkeypatch):
+    _enable_xiaoe(client, max_jobs=5, since="2026-08-01")
+
+    def fake_list(adapter_name, auth, catalog_id, since=None):
+        assert since is not None
+        return [
+            CatalogItem(
+                source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_today?app_id=appdemo",
+                title="今天",
+                created_at=_published(),
+            ),
+            CatalogItem(
+                source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_yday?app_id=appdemo",
+                title="昨天",
+                created_at=_published(-1),
+            ),
+        ]
+
+    monkeypatch.setattr("app.services.schedule.list_catalog", fake_list)
+    log = client.post("/api/schedule/run").json()
+    assert log["detail"][0]["created"] == 1
+    jobs = client.get("/api/jobs").json()["items"]
+    assert [item["title"] for item in jobs] == ["今天"]
 
 
 def test_schedule_site_error_is_partial(client, monkeypatch):
@@ -263,7 +306,7 @@ def test_schedule_site_error_is_partial(client, monkeypatch):
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_ok?app_id=appdemo",
                 title="成功",
-                created_at=datetime(2026, 8, 14, 4, 0, tzinfo=timezone.utc),
+                created_at=_published(),
             )
         ]
 
@@ -397,7 +440,7 @@ def test_schedule_bilibili_keeps_created_jobs_when_later_up_rate_limited(client,
             CatalogItem(
                 source_url="https://www.bilibili.com/video/BV1a4awzsENn",
                 title="卖票方法",
-                created_at=datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc),
+                created_at=_published(),
             )
         ]
 
@@ -407,6 +450,49 @@ def test_schedule_bilibili_keeps_created_jobs_when_later_up_rate_limited(client,
     assert log["detail"][0]["created"] == 1
     assert "新建 1" in log["summary"]
     assert "失败" not in log["summary"]
+    assert "已保留已拉到的条目" in log["summary"]
+    assert "Cookie" in log["summary"]
+    assert "过于频繁" not in log["summary"]
+
+
+def test_schedule_hides_rate_limit_when_quota_filled(client, monkeypatch):
+    from app.services.ingest.base import CatalogError
+
+    monkeypatch.setattr("app.services.schedule.BILI_CATALOG_PAUSE", 0)
+    sites = _sites_by_adapter(client)
+    saved = client.put(
+        "/api/schedule",
+        json={
+            "enabled": True,
+            "time": "08:00",
+            "since": "",
+            "max_jobs": 1,
+            "sites": [
+                {"site_id": sites["xiaoe"]["id"], "enabled": False, "catalog_id": ""},
+                {"site_id": sites["yueniu"]["id"], "enabled": False, "catalog_id": ""},
+                {"site_id": sites["bilibili"]["id"], "enabled": True, "catalog_id": "111,222"},
+            ],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    def fake_list(adapter_name, auth, catalog_id, since=None):
+        if catalog_id == "222":
+            raise CatalogError("稿件列表被限流，请等几分钟再试")
+        return [
+            CatalogItem(
+                source_url="https://www.bilibili.com/video/BV1a4awzsENn",
+                title="卖票方法",
+                created_at=_published(),
+            )
+        ]
+
+    monkeypatch.setattr("app.services.schedule.list_catalog", fake_list)
+    log = client.post("/api/schedule/run").json()
+    assert log["status"] == "ok"
+    assert log["detail"][0]["created"] == 1
+    assert "新建 1" in log["summary"]
+    assert "限流" not in log["summary"]
 
 
 def test_schedule_multiple_catalog_ids(client, monkeypatch):
@@ -417,9 +503,9 @@ def test_schedule_multiple_catalog_ids(client, monkeypatch):
         seen.append(catalog_id)
         return [
             CatalogItem(
-                source_url=f"https://{catalog_id}.h5.xiaoeknow.com/v4/course/alive/l_1?app_id={catalog_id}",
+                source_url=f"https://{catalog_id}.h5.xiaoeknow.com/v4/course/alive/{catalog_id}?app_id={catalog_id}",
                 title=catalog_id,
-                created_at=datetime(2026, 8, 14, 4, 0, tzinfo=timezone.utc),
+                created_at=_published(),
             )
         ]
 
@@ -512,7 +598,7 @@ def test_cron_does_not_run_when_schedule_disabled(client, db_session, monkeypatc
             CatalogItem(
                 source_url="https://www.bilibili.com/video/BV1a4awzsENn",
                 title="不应创建",
-                created_at=datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc),
+                created_at=_published(),
             )
         ]
 
@@ -538,7 +624,7 @@ def test_cron_skips_second_run_the_same_day(client, db_session, monkeypatch):
             CatalogItem(
                 source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_once?app_id=appdemo",
                 title="只应创建一次",
-                created_at=datetime(2026, 8, 14, 4, 0, tzinfo=timezone.utc),
+                created_at=_published(),
             )
         ],
     )
@@ -557,3 +643,120 @@ def test_cron_skips_second_run_the_same_day(client, db_session, monkeypatch):
     assert len(client.get("/api/jobs").json()["items"]) == 1
     manual = client.post("/api/schedule/run").json()
     assert manual["trigger"] == "manual"
+
+
+def test_schedule_run_binds_log_and_digest_id(client, db_session, monkeypatch):
+    captured = {}
+
+    def fake_execute(job_ids, digest_log_id=None):
+        captured["ids"] = list(job_ids)
+        captured["digest"] = digest_log_id
+
+    monkeypatch.setattr("app.services.schedule._execute_jobs", fake_execute)
+
+    def fake_list(adapter_name, auth, catalog_id, since=None):
+        return [
+            CatalogItem(
+                source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_digest?app_id=appdemo",
+                title="汇总源",
+                author="作者甲",
+                created_at=_published(),
+            )
+        ]
+
+    _enable_xiaoe(client)
+    monkeypatch.setattr("app.services.schedule.list_catalog", fake_list)
+    log = client.post("/api/schedule/run").json()
+    jobs = db_session.query(Job).all()
+    assert len(jobs) == 1
+    assert jobs[0].schedule_log_id == log["id"]
+    assert captured["ids"] == [jobs[0].id]
+    assert captured["digest"] == log["id"]
+
+
+def test_schedule_digest_disabled_skips_digest_log(client, monkeypatch):
+    captured = {}
+
+    def fake_execute(job_ids, digest_log_id=None):
+        captured["digest"] = digest_log_id
+        captured["ids"] = list(job_ids)
+
+    monkeypatch.setattr("app.services.schedule._execute_jobs", fake_execute)
+    sites = _sites_by_adapter(client)
+    saved = client.put(
+        "/api/schedule",
+        json={
+            "enabled": True,
+            "time": "08:00",
+            "since": "2026-08-01",
+            "max_jobs": 5,
+            "domain_id": "a-share",
+            "digest_enabled": False,
+            "sites": [
+                {"site_id": sites["xiaoe"]["id"], "enabled": True, "catalog_id": "appdemo"},
+                {"site_id": sites["yueniu"]["id"], "enabled": False, "catalog_id": ""},
+                {"site_id": sites["bilibili"]["id"], "enabled": False, "catalog_id": ""},
+            ],
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["digest_enabled"] is False
+
+    def fake_list(adapter_name, auth, catalog_id, since=None):
+        return [
+            CatalogItem(
+                source_url="https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_off?app_id=appdemo",
+                title="关闭汇总",
+                created_at=_published(),
+            )
+        ]
+
+    monkeypatch.setattr("app.services.schedule.list_catalog", fake_list)
+    client.post("/api/schedule/run")
+    assert captured["ids"]
+    assert captured["digest"] is None
+
+
+def test_run_created_jobs_digest_only_with_log(monkeypatch):
+    from app.services.schedule import _run_created_jobs
+
+    ran = []
+
+    class Pipe:
+        def run_job(self, job_id):
+            ran.append(("job", job_id))
+
+    monkeypatch.setattr("app.services.schedule.get_pipeline", lambda: Pipe())
+    monkeypatch.setattr("app.services.digest.run_schedule_digest", lambda log_id: ran.append(("digest", log_id)))
+    _run_created_jobs(["j1", "j2"], digest_log_id="log-1")
+    assert ran == [("job", "j1"), ("job", "j2"), ("digest", "log-1")]
+    ran.clear()
+    _run_created_jobs(["j3"])
+    assert ran == [("job", "j3")]
+
+
+def test_start_detached_run_skips_previous_completed_log(db_session, monkeypatch):
+    from app.services.schedule import start_detached_run
+
+    TestingSession = sessionmaker(bind=db_session.get_bind(), autoflush=False, autocommit=False)
+    monkeypatch.setattr("app.services.schedule.SessionLocal", TestingSession)
+    old = ScheduleLog(trigger="manual", status="ok", summary="旧日志", finished_at=utcnow())
+    db_session.add(old)
+    db_session.commit()
+    old_id = old.id
+
+    def fake_run(trigger="manual", execute=True, db=None):
+        session = TestingSession()
+        try:
+            row = ScheduleLog(trigger=trigger, status="running", summary="正在扫描站点")
+            session.add(row)
+            session.commit()
+        finally:
+            session.close()
+
+    monkeypatch.setattr("app.services.schedule.run_once", fake_run)
+    result = start_detached_run("manual")
+    assert result.id != old_id
+    assert result.status == "running"
+    assert "正在扫描" in result.summary
+
