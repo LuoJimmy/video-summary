@@ -1,4 +1,5 @@
 import { A_SHARE_HIGHLIGHT, type OverviewHighlight } from "./domain";
+import { formatVideoClock, parseVideoClock } from "./time";
 
 const TARGET_CHARS = 110;
 const MAX_CHARS = 180;
@@ -54,10 +55,18 @@ export function overviewIsStructured(text: string): boolean {
   );
 }
 
-export function formatOverviewDocument(text: string): string {
+export type OverviewFormatOptions = {
+  seekableClocks?: boolean;
+};
+
+export function formatOverviewDocument(
+  text: string,
+  options: OverviewFormatOptions = {}
+): string {
   const raw = text.replace(/\r\n/g, "\n").trim();
   if (!raw) return "";
-  if (overviewIsStructured(raw)) return renderRich(collapseLoneSubblocks(raw));
+  if (overviewIsStructured(raw))
+    return renderRich(collapseLoneSubblocks(raw), options);
   const list = splitOverviewListItems(raw);
   if (list) {
     return `<ul class="overview-list">${list.map((item) => `<li>${renderInline(item)}</li>`).join("")}</ul>`;
@@ -131,7 +140,66 @@ function renderTable(rows: string[][]): string {
   return `<div class="overview-table-wrap"><table class="overview-table"><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div>`;
 }
 
-function renderRich(text: string): string {
+function parseClockRanges(
+  body: string
+): Array<{ start: number; end: number }> {
+  const parts = body
+    .split(/[、,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const part of parts) {
+    const match = part.match(
+      /^(\d{1,2}:\d{2}(?::\d{2})?)\s*[–—－-]\s*(\d{1,2}:\d{2}(?::\d{2})?)$/
+    );
+    if (!match) continue;
+    const start = parseVideoClock(match[1]);
+    const end = parseVideoClock(match[2]);
+    if (start === null || end === null) continue;
+    ranges.push({ start, end });
+  }
+  return ranges;
+}
+
+function extractHeadingClocks(text: string): {
+  title: string;
+  ranges: Array<{ start: number; end: number }>;
+} | null {
+  const match = text.match(/^(.+?)[（(]\s*约\s*(.+?)\s*[）)]\s*$/);
+  if (!match) return null;
+  const ranges = parseClockRanges(match[2]);
+  if (!ranges.length) return null;
+  return { title: match[1].trim(), ranges };
+}
+
+function renderHeading(
+  level: "h3" | "h4" | "h5",
+  text: string,
+  seekable: boolean
+): string {
+  const clocks = extractHeadingClocks(text);
+  if (!clocks) {
+    return `<${level} class="overview-h">${renderInline(text)}</${level}>`;
+  }
+  if (seekable) {
+    const buttons = clocks.ranges
+      .map(
+        (item) =>
+          `<button type="button" class="time-btn overview-clock" data-seek="${item.start}">${escapeHtml(formatVideoClock(item.start))}</button>`
+      )
+      .join("");
+    return `<${level} class="overview-h overview-h-clock">${renderInline(clocks.title)}${buttons}</${level}>`;
+  }
+  const normalized = clocks.ranges
+    .map(
+      (item) => `${formatVideoClock(item.start)}–${formatVideoClock(item.end)}`
+    )
+    .join("、");
+  return `<${level} class="overview-h">${renderInline(`${clocks.title}（约 ${normalized}）`)}</${level}>`;
+}
+
+function renderRich(text: string, options: OverviewFormatOptions = {}): string {
+  const seekable = Boolean(options.seekableClocks);
   const lines = text.split("\n");
   const parts: string[] = [];
   let listOpen: "ul" | "ol" | "" = "";
@@ -168,9 +236,7 @@ function renderRich(text: string): string {
       closeList();
       const tags = { 1: "h3", 2: "h3", 3: "h4", 4: "h5" } as const;
       const level = tags[heading[1].length as 1 | 2 | 3 | 4];
-      parts.push(
-        `<${level} class="overview-h">${renderInline(heading[2].trim())}</${level}>`
-      );
+      parts.push(renderHeading(level, heading[2].trim(), seekable));
       index += 1;
       continue;
     }

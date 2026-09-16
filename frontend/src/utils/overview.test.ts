@@ -136,4 +136,35 @@ describe("formatOverviewHtml", () => {
     expect(html).toContain("人体穴位对应天地");
     expect(html).not.toContain("道的全息与不可言说");
   });
+
+  it("normalizes heading clocks to hh:mm:ss by default", () => {
+    const html = formatOverviewDocument(
+      "### 一、市场节奏（约 09:29–01:03）"
+    );
+    expect(html).toContain(
+      '<h4 class="overview-h">一、市场节奏（约 00:09:29–00:01:03）</h4>'
+    );
+    expect(html).not.toContain("data-seek");
+  });
+
+  it("renders seekable chapter clocks as start buttons", () => {
+    const html = formatOverviewDocument(
+      [
+        "## 论证结构",
+        "### 一、市场节奏（约 00:15:39–00:23:07）",
+        "#### 1. 低吸纪律（约 00:20:00–00:22:25、00:40:00–00:41:19）",
+        "#### 2. 仓位管理（约 00:23:07–00:54:51）",
+      ].join("\n"),
+      { seekableClocks: true }
+    );
+    expect(html).toContain("市场节奏");
+    expect(html).toContain('data-seek="939"');
+    expect(html).toContain(">00:15:39</button>");
+    expect(html).not.toContain("约 00:15:39");
+    expect(html).toContain('data-seek="1200"');
+    expect(html).toContain('data-seek="2400"');
+    expect(html).toContain(">00:20:00</button>");
+    expect(html).toContain(">00:40:00</button>");
+    expect(html).toContain('data-seek="1387"');
+  });
 });

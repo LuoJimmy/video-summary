@@ -4,9 +4,11 @@ import {
   formatDateTime,
   formatDuration,
   formatTimestamp,
+  formatVideoClock,
   isJobActive,
   jobElapsedSeconds,
   localDayBoundIso,
+  parseVideoClock,
   statusLabel,
 } from "./time";
 
@@ -34,6 +36,22 @@ describe("formatTimestamp", () => {
   it("formats minutes and hours", () => {
     expect(formatTimestamp(75)).toBe("01:15");
     expect(formatTimestamp(3723)).toBe("01:02:03");
+  });
+});
+
+describe("formatVideoClock", () => {
+  it("always includes hours", () => {
+    expect(formatVideoClock(569)).toBe("00:09:29");
+    expect(formatVideoClock(3723)).toBe("01:02:03");
+  });
+});
+
+describe("parseVideoClock", () => {
+  it("treats two-part clocks as minutes and seconds", () => {
+    expect(parseVideoClock("09:29")).toBe(569);
+    expect(parseVideoClock("00:09:29")).toBe(569);
+    expect(parseVideoClock("01:02:03")).toBe(3723);
+    expect(parseVideoClock("bad")).toBeNull();
   });
 });
 

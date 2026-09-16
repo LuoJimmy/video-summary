@@ -81,6 +81,24 @@ export function formatTimestamp(seconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
+export function formatVideoClock(seconds: number): string {
+  // 综述用的片子时钟，始终带小时，避免 09:29 被看成开盘时刻。
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+export function parseVideoClock(text: string): number | null {
+  const match = (text || "").trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  if (match[3] !== undefined) {
+    return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+  }
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
 export function statusLabel(status: string, stage: string): string {
   if (status === "done") return "已完成";
   if (status === "failed") return "失败";

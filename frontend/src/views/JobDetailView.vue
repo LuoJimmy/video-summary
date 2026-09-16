@@ -22,6 +22,7 @@ import VideoPlayer from "../components/VideoPlayer.vue";
 import DocumentPreview from "../components/DocumentPreview.vue";
 import {
   formatOverviewDocument,
+  overviewIsStructured,
   setOverviewHighlight,
 } from "../utils/overview";
 import { highlightFromPack, type DomainPack } from "../utils/domain";
@@ -57,13 +58,19 @@ const nowMs = ref(Date.now());
 let timer: number | undefined;
 let clock: number | undefined;
 
-const overviewHtml = computed(() =>
-  formatOverviewDocument(job.value?.summary?.overview || "")
-);
 const hasTranscript = computed(() => Boolean(job.value?.transcript.length));
 const isDocument = computed(() =>
   isDocumentSource(job.value?.source_type)
 );
+const overviewHtml = computed(() =>
+  formatOverviewDocument(job.value?.summary?.overview || "", {
+    seekableClocks: !isDocument.value,
+  })
+);
+const showChapterBlocks = computed(() => {
+  if (isDocument.value) return true;
+  return !overviewIsStructured(job.value?.summary?.overview || "");
+});
 const highlightedSeg = ref<number | null>(null);
 const previewPage = ref<number | null>(null);
 const previewSeg = ref<number | null>(null);
@@ -263,6 +270,17 @@ function goTo(item: {
     return;
   }
   player.value?.seek(item.start || 0);
+}
+
+function onOverviewClick(event: MouseEvent) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const btn = target.closest("[data-seek]");
+  if (!(btn instanceof HTMLElement)) return;
+  const start = Number(btn.getAttribute("data-seek"));
+  if (!Number.isFinite(start) || start < 0) return;
+  event.preventDefault();
+  goTo({ start });
 }
 
 function seekFromQuery() {
@@ -553,29 +571,31 @@ onBeforeUnmount(() => {
 
     <section v-if="job.summary" class="card">
       <h2>{{ job.summary.title }}</h2>
-      <div class="overview" v-html="overviewHtml" />
-      <div
-        v-for="(chapter, index) in job.summary.chapters"
-        :key="index"
-        class="chapter-block"
-      >
-        <p class="text-line">
-          <Button
-            class="time-btn"
-            variant="secondary"
-            size="sm"
-            type="button"
-            @click="goTo(chapter)"
-            >{{ placeLabel(chapter) }}</Button
-          >
-          <strong>{{ chapter.title }}</strong>
-        </p>
-        <ul>
-          <li v-for="(bullet, bIndex) in chapter.bullets" :key="bIndex">
-            {{ bullet }}
-          </li>
-        </ul>
-      </div>
+      <div class="overview" @click="onOverviewClick" v-html="overviewHtml" />
+      <template v-if="showChapterBlocks">
+        <div
+          v-for="(chapter, index) in job.summary.chapters"
+          :key="index"
+          class="chapter-block"
+        >
+          <p class="text-line">
+            <Button
+              class="time-btn"
+              variant="secondary"
+              size="sm"
+              type="button"
+              @click="goTo(chapter)"
+              >{{ placeLabel(chapter) }}</Button
+            >
+            <strong>{{ chapter.title }}</strong>
+          </p>
+          <ul>
+            <li v-for="(bullet, bIndex) in chapter.bullets" :key="bIndex">
+              {{ bullet }}
+            </li>
+          </ul>
+        </div>
+      </template>
       <div v-if="job.summary.key_points.length" class="chapter-block">
         <h3>关键定位</h3>
         <p

@@ -383,6 +383,91 @@ describe("回到顶部", () => {
   });
 });
 
+describe("综述章节与片子时钟", () => {
+  it("结构化综述后不重复展示分段章节，点击片子时钟跳转", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({
+        status: "done",
+        stage: "done",
+        progress: 100,
+        media_url: "https://cdn.example.com/play.mp4",
+        summary: {
+          title: "复盘",
+          overview: [
+            "## 论证结构",
+            "### 一、市场节奏（约 00:15:39–00:23:07）",
+            "这一节讲低吸纪律。",
+          ].join("\n"),
+          chapters: [
+            {
+              title: "分段章节标题不应出现",
+              start_segment: 0,
+              end_segment: 0,
+              start: 15,
+              end: 40,
+              bullets: ["分段章节要点不应出现"],
+            },
+          ],
+          key_points: [
+            {
+              text: "关键一句",
+              start_segment: 0,
+              end_segment: 0,
+              start: 20,
+              end: 21,
+            },
+          ],
+        },
+      })
+    );
+    const el = await mountDetail();
+    expect(el.textContent).toContain("市场节奏");
+    expect(el.textContent).toContain("关键一句");
+    expect(el.textContent).not.toContain("分段章节标题不应出现");
+    expect(el.textContent).not.toContain("分段章节要点不应出现");
+    const clock = el.querySelector(
+      ".overview [data-seek]"
+    ) as HTMLButtonElement | null;
+    expect(clock).not.toBeNull();
+    expect(clock?.getAttribute("data-seek")).toBe("939");
+    expect(clock?.textContent).toBe("00:15:39");
+    clock?.click();
+    await flush();
+    const video = el.querySelector("video.player") as HTMLVideoElement | null;
+    expect(video?.currentTime).toBe(939);
+  });
+
+  it("纯文本综述仍显示分段章节", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({
+        status: "done",
+        stage: "done",
+        progress: 100,
+        media_url: "https://cdn.example.com/play.mp4",
+        summary: {
+          title: "复盘",
+          overview: "这是一段旧的纯文本综述。",
+          chapters: [
+            {
+              title: "开场分段",
+              start_segment: 0,
+              end_segment: 0,
+              start: 12,
+              end: 40,
+              bullets: ["要点甲"],
+            },
+          ],
+          key_points: [],
+        },
+      })
+    );
+    const el = await mountDetail();
+    expect(el.textContent).toContain("开场分段");
+    expect(el.textContent).toContain("要点甲");
+  });
+});
+
 describe("媒体地址覆盖", () => {
   it("默认不显示，解析失败后展开并随重试提交", async () => {
     const failed = makeJob({
