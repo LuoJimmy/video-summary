@@ -20,6 +20,7 @@ import type { DomainPack } from "../utils/domain";
 import { emptyDomainPack } from "../utils/domain";
 import {
   isCatalogSourceUrl,
+  isDigestSource,
   needsMediaOverrideError,
   parseSourceUrls,
   publicSourceUrl,
@@ -119,8 +120,27 @@ const hasFilters = computed(() =>
 );
 const sourceUrls = computed(() => parseSourceUrls(sourceUrl.value));
 const selectedCount = computed(() => selectedIds.value.size);
-const pageSelectedCount = computed(
-  () => jobs.value.filter((job) => selectedIds.value.has(job.id)).length
+const selectedJobs = computed(() =>
+  jobs.value.filter((job) => selectedIds.value.has(job.id))
+);
+const unknownSelectedCount = computed(
+  () => selectedIds.value.size - selectedJobs.value.length
+);
+const pageSelectedCount = computed(() => selectedJobs.value.length);
+const canBatchCancel = computed(
+  () =>
+    selectedJobs.value.some((job) => isJobActive(job.status)) ||
+    unknownSelectedCount.value > 0
+);
+const canBatchRetry = computed(
+  () =>
+    selectedJobs.value.some((job) => canRetry(job.status)) ||
+    unknownSelectedCount.value > 0
+);
+const canBatchDigest = computed(
+  () =>
+    selectedJobs.value.filter(canDigestJob).length + unknownSelectedCount.value >=
+    2
 );
 const pageSelectState = computed(() => {
   if (!jobs.value.length || pageSelectedCount.value === 0) return false;
@@ -263,6 +283,10 @@ function syncClock() {
 
 function canRetry(status: string) {
   return status === "failed" || status === "cancelled";
+}
+
+function canDigestJob(job: Job) {
+  return job.status === "done" && !isDigestSource(job.source_type);
 }
 
 function pruneSelection(ids: string[]) {
@@ -1087,27 +1111,31 @@ onBeforeUnmount(() => {
         aria-label="全选当前页"
         @update:model-value="setPageSelect"
       />
-      <template v-if="selectedCount">
+      <div
+        class="list-toolbar-meta"
+        :class="{ 'is-idle': !selectedCount }"
+        :aria-hidden="selectedCount ? undefined : true"
+      >
         <span class="msg">已选 {{ selectedCount }}</span>
         <div class="list-actions">
           <Button
             variant="outline"
             type="button"
-            :disabled="batchBusy"
+            :disabled="batchBusy || !selectedCount || !canBatchDigest"
             @click="batchDigest"
             >汇总总结</Button
           >
           <Button
             variant="outline"
             type="button"
-            :disabled="batchBusy"
+            :disabled="batchBusy || !selectedCount || !canBatchCancel"
             @click="batchCancel"
             >取消</Button
           >
           <Button
             variant="outline"
             type="button"
-            :disabled="batchBusy"
+            :disabled="batchBusy || !selectedCount || !canBatchRetry"
             @click="batchRetry"
             >重试</Button
           >
@@ -1115,12 +1143,12 @@ onBeforeUnmount(() => {
             variant="outline"
             class="text-destructive"
             type="button"
-            :disabled="batchBusy"
+            :disabled="batchBusy || !selectedCount"
             @click="askBatchDelete"
             >删除</Button
           >
         </div>
-      </template>
+      </div>
     </div>
     <div v-if="!jobs.length" class="msg empty-list">
       {{ hasFilters ? "没有符合条件的任务。" : "还没有任务。" }}

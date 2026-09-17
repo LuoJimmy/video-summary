@@ -462,6 +462,15 @@ describe("批量创建", () => {
 });
 
 describe("批量管理", () => {
+  it("未选中时仍保留批量操作栏占位", async () => {
+    const el = await mountJobs();
+    const meta = el.querySelector(".list-toolbar-meta") as HTMLElement | null;
+    expect(meta).toBeTruthy();
+    expect(meta?.classList.contains("is-idle")).toBe(true);
+    expect(toolbarButton(el, "汇总总结")).toBeTruthy();
+    expect(toolbarButton(el, "删除")?.disabled).toBe(true);
+  });
+
   it("全选后批量删除走确认", async () => {
     const items = [
       makeJob({ id: "job-1", title: "甲" }),
@@ -520,28 +529,69 @@ describe("批量管理", () => {
     expect(push).toHaveBeenCalledWith("/jobs/digest-1");
   });
 
-  it("只选一个任务时不调用汇总接口", async () => {
+  it("只选一个任务时禁用汇总", async () => {
     const el = await mountJobs([makeJob({ status: "done", stage: "done" })]);
     const selectAll = el.querySelector(
       '[aria-label="全选当前页"]'
     ) as HTMLElement;
     selectAll.click();
     await flush();
-    toolbarButton(el, "汇总总结")?.click();
-    await flush();
-    expect(api.digestJobs).not.toHaveBeenCalled();
+    expect(toolbarButton(el, "汇总总结")?.disabled).toBe(true);
+    expect(toolbarButton(el, "取消")?.disabled).toBe(true);
+    expect(toolbarButton(el, "重试")?.disabled).toBe(true);
+    expect(toolbarButton(el, "删除")?.disabled).toBe(false);
   });
 
-  it("所选都不可取消时不调用批量接口", async () => {
-    const el = await mountJobs([makeJob({ status: "done", stage: "done" })]);
+  it("所选都不可取消时禁用取消和重试", async () => {
+    const items = [
+      makeJob({ id: "job-1", status: "done", stage: "done" }),
+      makeJob({ id: "job-2", status: "done", stage: "done" }),
+    ];
+    const el = await mountJobs(items);
     const selectAll = el.querySelector(
       '[aria-label="全选当前页"]'
     ) as HTMLElement;
     selectAll.click();
     await flush();
-    toolbarButton(el, "取消")?.click();
+    expect(toolbarButton(el, "汇总总结")?.disabled).toBe(false);
+    expect(toolbarButton(el, "取消")?.disabled).toBe(true);
+    expect(toolbarButton(el, "重试")?.disabled).toBe(true);
+    expect(toolbarButton(el, "删除")?.disabled).toBe(false);
+  });
+
+  it("所选含处理中时仅取消可用，失败任务可重试", async () => {
+    const items = [
+      makeJob({ id: "job-1", status: "running", stage: "transcribing" }),
+      makeJob({ id: "job-2", status: "failed", stage: "failed" }),
+    ];
+    const el = await mountJobs(items);
+    const selectAll = el.querySelector(
+      '[aria-label="全选当前页"]'
+    ) as HTMLElement;
+    selectAll.click();
     await flush();
-    expect(api.batchJobs).not.toHaveBeenCalled();
+    expect(toolbarButton(el, "汇总总结")?.disabled).toBe(true);
+    expect(toolbarButton(el, "取消")?.disabled).toBe(false);
+    expect(toolbarButton(el, "重试")?.disabled).toBe(false);
+  });
+
+  it("所选含汇总任务时不计入可汇总数量", async () => {
+    const items = [
+      makeJob({ id: "job-1", status: "done", stage: "done" }),
+      makeJob({
+        id: "job-2",
+        status: "done",
+        stage: "done",
+        source_type: "digest",
+      }),
+    ];
+    const el = await mountJobs(items);
+    const selectAll = el.querySelector(
+      '[aria-label="全选当前页"]'
+    ) as HTMLElement;
+    selectAll.click();
+    await flush();
+    expect(toolbarButton(el, "汇总总结")?.disabled).toBe(true);
   });
 });
 

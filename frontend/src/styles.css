@@ -925,6 +925,18 @@ h3 {
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--line);
 }
+.list-toolbar-meta {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.list-toolbar-meta.is-idle {
+  visibility: hidden;
+  pointer-events: none;
+}
 .list-toolbar .list-actions {
   margin-left: auto;
 }
