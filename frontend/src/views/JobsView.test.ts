@@ -16,6 +16,7 @@ vi.mock("../api", () => ({
     fromCatalog: vi.fn(),
     uploadJob: vi.fn(),
     batchJobs: vi.fn(),
+    digestJobs: vi.fn(),
     settings: vi.fn(),
   },
 }));
@@ -117,6 +118,7 @@ beforeEach(() => {
   vi.mocked(api.preview).mockReset();
   vi.mocked(api.uploadJob).mockReset();
   vi.mocked(api.batchJobs).mockReset();
+  vi.mocked(api.digestJobs).mockReset();
   vi.mocked(api.deleteJob).mockReset();
 });
 
@@ -488,6 +490,46 @@ describe("批量管理", () => {
     await flush();
     expect(api.batchJobs).toHaveBeenCalledWith("delete", ["job-1", "job-2"]);
     expect(api.deleteJob).not.toHaveBeenCalled();
+  });
+
+  it("多选后可创建汇总总结", async () => {
+    const items = [
+      makeJob({ id: "job-1", title: "甲" }),
+      makeJob({ id: "job-2", title: "乙" }),
+    ];
+    const el = await mountJobs(items);
+    const push = vi.spyOn(mountedRouter!, "push");
+    vi.mocked(api.digestJobs).mockResolvedValue(
+      makeJob({
+        id: "digest-1",
+        title: "2026-09-17 11:00 汇总",
+        source_type: "digest",
+        source_url: "digest://job-1,job-2",
+      })
+    );
+    const selectAll = el.querySelector(
+      '[aria-label="全选当前页"]'
+    ) as HTMLElement;
+    selectAll.click();
+    await flush();
+    toolbarButton(el, "汇总总结")?.click();
+    await flush();
+    await flush();
+    await flush();
+    expect(api.digestJobs).toHaveBeenCalledWith(["job-1", "job-2"]);
+    expect(push).toHaveBeenCalledWith("/jobs/digest-1");
+  });
+
+  it("只选一个任务时不调用汇总接口", async () => {
+    const el = await mountJobs([makeJob({ status: "done", stage: "done" })]);
+    const selectAll = el.querySelector(
+      '[aria-label="全选当前页"]'
+    ) as HTMLElement;
+    selectAll.click();
+    await flush();
+    toolbarButton(el, "汇总总结")?.click();
+    await flush();
+    expect(api.digestJobs).not.toHaveBeenCalled();
   });
 
   it("所选都不可取消时不调用批量接口", async () => {

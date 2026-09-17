@@ -5,7 +5,7 @@ from sqlalchemy import or_
 
 from app.models import Job
 from app.schemas import AppSettingsOut, KnowledgeDoc, KnowledgeHit, KnowledgeSearchOut
-from app.services.digest import DIGEST_SOURCE, is_digest_source
+from app.services.digest import DIGEST_SOURCE_TYPES, is_digest_source
 from app.services.domain import DEFAULT_DOMAIN_ID, knowledge_system, pack_by_id, stored_job_domain
 from app.services.httpclient import create_chat_completion, openai_client
 from app.services.jsonutil import coerce_model_text, loads
@@ -78,7 +78,7 @@ def job_has_knowledge_text(job: Job) -> bool:
 
 
 def knowledge_content_filter(query):
-    return query.filter(Job.transcript_json != "").filter(Job.source_type != DIGEST_SOURCE)
+    return query.filter(Job.transcript_json != "").filter(~Job.source_type.in_(DIGEST_SOURCE_TYPES))
 
 
 def search_knowledge(

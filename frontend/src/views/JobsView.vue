@@ -367,7 +367,27 @@ function toastBatchAction(
     toast.success(`${doneLabel} ${ok} 个任务`);
     return;
   }
-  toast.warning(`成功 ${ok}，失败 ${failed}`);
+    toast.warning(`成功 ${ok}，失败 ${failed}`);
+}
+
+async function batchDigest() {
+  const ids = [...selectedIds.value];
+  if (ids.length < 2) {
+    toast.error("请至少选择 2 个任务");
+    return;
+  }
+  if (batchBusy.value) return;
+  batchBusy.value = true;
+  try {
+    const job = await api.digestJobs(ids);
+    selectedIds.value = new Set();
+    toast.success("已创建汇总任务");
+    await router.push(`/jobs/${job.id}`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "汇总失败");
+  } finally {
+    batchBusy.value = false;
+  }
 }
 
 async function batchCancel() {
@@ -1070,6 +1090,13 @@ onBeforeUnmount(() => {
       <template v-if="selectedCount">
         <span class="msg">已选 {{ selectedCount }}</span>
         <div class="list-actions">
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="batchBusy"
+            @click="batchDigest"
+            >汇总总结</Button
+          >
           <Button
             variant="outline"
             type="button"

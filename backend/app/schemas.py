@@ -196,6 +196,10 @@ class JobBatchActionIn(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=100)
 
 
+class JobDigestIn(BaseModel):
+    ids: list[str] = Field(min_length=2, max_length=100)
+
+
 class JobBatchFailedItem(BaseModel):
     id: str
     reason: str

@@ -23,7 +23,9 @@ describe("source helpers", () => {
     expect(sourceTypeLabel("http_document")).toBe("在线文档");
     expect(sourceTypeLabel("web_page")).toBe("网页");
     expect(sourceTypeLabel("schedule_digest")).toBe("定时汇总");
+    expect(sourceTypeLabel("digest")).toBe("汇总");
     expect(isDigestSource("schedule_digest")).toBe(true);
+    expect(isDigestSource("digest")).toBe(true);
     expect(isDigestSource("page")).toBe(false);
   });
 

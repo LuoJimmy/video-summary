@@ -9,7 +9,8 @@ export function isDocumentSource(sourceType: string | null | undefined): boolean
 }
 
 export function isDigestSource(sourceType: string | null | undefined): boolean {
-  return (sourceType || "") === "schedule_digest";
+  const raw = sourceType || "";
+  return raw === "schedule_digest" || raw === "digest";
 }
 
 export function sourceTypeLabel(sourceType: string | null | undefined): string {
@@ -25,6 +26,7 @@ export function sourceTypeLabel(sourceType: string | null | undefined): string {
     live: "直播",
     catalog: "目录",
     schedule_digest: "定时汇总",
+    digest: "汇总",
   };
   const raw = (sourceType || "").trim();
   return labels[raw] || raw || "未知类型";

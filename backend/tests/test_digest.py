@@ -4,7 +4,12 @@ from app.models import Job, ScheduleLog
 from app.schemas import AppSettingsOut, SummaryResult
 from app.services.digest import (
     DIGEST_SOURCE,
+    MANUAL_DIGEST_SOURCE,
+    create_digest_from_jobs,
     digest_sources,
+    encode_digest_source_url,
+    fill_digest_job,
+    related_job_refs,
     run_schedule_digest,
     summarize_digest,
 )
@@ -175,3 +180,70 @@ def test_run_schedule_digest_skips_when_no_summaries(db_session, monkeypatch):
     log = db_session.get(ScheduleLog, log.id)
     assert not log.digest_job_id
     assert db_session.query(Job).filter(Job.source_type == DIGEST_SOURCE).count() == 0
+
+
+def test_create_digest_from_jobs(db_session, monkeypatch):
+    first = _done_job()
+    second = _done_job(
+        title="低吸课",
+        author="作者乙",
+        source_url="https://example.com/c",
+        summary_json=dumps(
+            {
+                "title": "低吸",
+                "overview": "另一场综述",
+                "chapters": [{"title": "低吸条件", "bullets": ["量能配合才做"]}],
+                "key_points": [],
+            }
+        ),
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+    digest = create_digest_from_jobs(db_session, [first.id, second.id])
+    assert digest.source_type == MANUAL_DIGEST_SOURCE
+    assert digest.source_url == encode_digest_source_url([first.id, second.id])
+    assert "汇总" in digest.title
+    assert [row.id for row in related_job_refs(db_session, digest)] == [first.id, second.id]
+    monkeypatch.setattr(
+        "app.services.digest.summarize_digest",
+        lambda sources, settings: SummaryResult(title="手工汇总", overview=FILLED_OVERVIEW),
+    )
+    monkeypatch.setattr("app.services.digest.load_settings", lambda _db: AppSettingsOut(summarize_api_key="k"))
+    fill_digest_job(db_session, digest)
+    db_session.refresh(digest)
+    assert digest.status == "done"
+    assert "一句话总结" in digest.summary_json
+
+
+def test_create_digest_from_jobs_requires_two_summaries(db_session):
+    first = _done_job()
+    pending = Job(title="未完成", source_url="https://example.com/p", status="pending", stage="queued")
+    db_session.add_all([first, pending])
+    db_session.commit()
+    try:
+        create_digest_from_jobs(db_session, [first.id, pending.id])
+    except ValueError as exc:
+        assert "至少需要 2 个" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_digest_jobs_endpoint(client, db_session, monkeypatch):
+    first = _done_job()
+    second = _done_job(title="低吸课", author="作者乙", source_url="https://example.com/c")
+    db_session.add_all([first, second])
+    db_session.commit()
+    queued: list[str] = []
+    monkeypatch.setattr("app.routers.jobs._enqueue", queued.append)
+    created = client.post("/api/jobs/digest", json={"ids": [first.id, second.id]})
+    assert created.status_code == 200
+    payload = created.json()
+    assert payload["source_type"] == MANUAL_DIGEST_SOURCE
+    assert payload["related_jobs"][0]["id"] == first.id
+    assert payload["related_jobs"][1]["id"] == second.id
+    assert queued == [payload["id"]]
+    too_few = client.post("/api/jobs/digest", json={"ids": [first.id]})
+    assert too_few.status_code == 422
+    missing = client.post("/api/jobs/digest", json={"ids": [first.id, "missing-id"]})
+    assert missing.status_code == 400
+    assert missing.json()["detail"] == "任务不存在"

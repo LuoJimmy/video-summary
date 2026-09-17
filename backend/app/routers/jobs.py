@@ -19,6 +19,7 @@ from app.schemas import (
     JobCatalogIn,
     JobCatalogOut,
     JobCreateIn,
+    JobDigestIn,
     JobListOut,
     JobMediaOut,
     JobOut,
@@ -28,7 +29,7 @@ from app.schemas import (
 )
 from app.serializers import job_out
 from app.services.authctx import build_auth
-from app.services.digest import is_digest_source
+from app.services.digest import create_digest_from_jobs, is_digest_source
 from app.services.domain import job_domain_id
 from app.services.document import (
     DocumentError,
@@ -557,6 +558,20 @@ def batch_jobs(
     for job_id in retry_ids:
         background.add_task(_enqueue, job_id)
     return JobBatchActionOut(ok=ok, failed=failed)
+
+
+@router.post("/digest", response_model=JobOut)
+def digest_jobs(
+    payload: JobDigestIn,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> JobOut:
+    try:
+        job = create_digest_from_jobs(db, payload.ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    background.add_task(_enqueue, job.id)
+    return job_out(job, db=db)
 
 
 @router.post("/{job_id}/resummarize", response_model=JobOut)

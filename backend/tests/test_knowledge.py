@@ -123,3 +123,14 @@ def test_digest_job_is_excluded_from_knowledge():
     hits = retrieve([digest, source], "卖票", limit=5)
     assert hits
     assert all(item.job_id != "digest1" for item in hits)
+    manual = Job(
+        id="digest2",
+        title="2026-09-17 11:00 汇总",
+        status="done",
+        source_type="digest",
+        source_url="digest://job1",
+        transcript_json="",
+        summary_json=digest.summary_json,
+    )
+    assert [item.job_id for item in search_knowledge([manual, source]).documents] == ["job1"]
+    assert all(item.job_id != "digest2" for item in retrieve([manual, source], "卖票", limit=5))

@@ -23,6 +23,9 @@ from app.services.summarize import (
 )
 
 DIGEST_SOURCE = "schedule_digest"
+MANUAL_DIGEST_SOURCE = "digest"
+DIGEST_SOURCE_TYPES = (DIGEST_SOURCE, MANUAL_DIGEST_SOURCE)
+DIGEST_URL_PREFIX = "digest://"
 DIGEST_RETRY_PROMPT = (
     "上次输出不是合法 JSON，或 overview 没写完。请重新输出完整可解析的 JSON：只要 title 和 overview。"
     "overview 必须含写满的「一句话总结」、主题与核心观点表三行、「论证结构」（按主题合并，禁止按来源拆章）以及「辨立场」。"
@@ -31,22 +34,56 @@ DIGEST_RETRY_PROMPT = (
 
 
 def is_digest_source(source_type: str | None) -> bool:
-    return (source_type or "") == DIGEST_SOURCE
+    return (source_type or "") in DIGEST_SOURCE_TYPES
+
+
+def encode_digest_source_url(job_ids: list[str]) -> str:
+    return DIGEST_URL_PREFIX + ",".join(job_ids)
+
+
+def parse_digest_source_ids(source_url: str | None) -> list[str]:
+    raw = (source_url or "").strip()
+    if not raw.startswith(DIGEST_URL_PREFIX):
+        return []
+    seen: set[str] = set()
+    ids: list[str] = []
+    for part in raw[len(DIGEST_URL_PREFIX) :].split(","):
+        job_id = part.strip()
+        if not job_id or job_id in seen:
+            continue
+        seen.add(job_id)
+        ids.append(job_id)
+    return ids
 
 
 def source_jobs_for_log(db: Session, log_id: str) -> list[Job]:
     return (
         db.query(Job)
         .filter(Job.schedule_log_id == log_id)
-        .filter(Job.source_type != DIGEST_SOURCE)
+        .filter(~Job.source_type.in_(DIGEST_SOURCE_TYPES))
         .order_by(Job.created_at.asc(), Job.id.asc())
         .all()
     )
 
 
-def related_job_refs(db: Session, job: Job) -> list[JobRelatedOut]:
+def source_jobs_for_digest(db: Session, job: Job) -> list[Job]:
+    if not is_digest_source(job.source_type):
+        return []
     log_id = (getattr(job, "schedule_log_id", "") or "").strip()
-    if not is_digest_source(job.source_type) or not log_id:
+    if log_id:
+        return source_jobs_for_log(db, log_id)
+    ids = parse_digest_source_ids(job.source_url)
+    if not ids:
+        return []
+    rows = {
+        row.id: row
+        for row in db.query(Job).filter(Job.id.in_(ids)).filter(~Job.source_type.in_(DIGEST_SOURCE_TYPES)).all()
+    }
+    return [rows[job_id] for job_id in ids if job_id in rows]
+
+
+def related_job_refs(db: Session, job: Job) -> list[JobRelatedOut]:
+    if not is_digest_source(job.source_type):
         return []
     return [
         JobRelatedOut(
@@ -55,7 +92,7 @@ def related_job_refs(db: Session, job: Job) -> list[JobRelatedOut]:
             author=row.author or "",
             status=row.status,
         )
-        for row in source_jobs_for_log(db, log_id)
+        for row in source_jobs_for_digest(db, job)
     ]
 
 
@@ -81,9 +118,10 @@ def digest_sources(jobs: list[Job]) -> list[dict]:
     return sources
 
 
-def digest_job_title(started_at) -> str:
+def digest_job_title(started_at, scheduled: bool = True) -> str:
     stamp = ensure_utc(started_at or utcnow()).astimezone(SHANGHAI)
-    return stamp.strftime("%Y-%m-%d %H:%M") + " 定时汇总"
+    suffix = "定时汇总" if scheduled else "汇总"
+    return stamp.strftime("%Y-%m-%d %H:%M") + " " + suffix
 
 
 def digest_payload_keys(sources: list[dict]) -> set[str]:
@@ -165,11 +203,48 @@ def _chat(client, settings: AppSettingsOut, system: str, user_content: str) -> s
     return coerce_model_text(getattr(message, "reasoning_content", None))
 
 
+def create_digest_from_jobs(db: Session, job_ids: list[str]) -> Job:
+    seen: set[str] = set()
+    ids: list[str] = []
+    for raw in job_ids:
+        job_id = (raw or "").strip()
+        if not job_id or job_id in seen:
+            continue
+        seen.add(job_id)
+        ids.append(job_id)
+    if len(ids) < 2:
+        raise ValueError("请至少选择 2 个任务")
+    rows: list[Job] = []
+    for job_id in ids:
+        job = db.get(Job, job_id)
+        if job is None:
+            raise ValueError("任务不存在")
+        if is_digest_source(job.source_type):
+            continue
+        rows.append(job)
+    usable = [job for job in rows if digest_sources([job])]
+    if len(usable) < 2:
+        raise ValueError("至少需要 2 个已完成且有章节总结的任务")
+    domain_id = job_domain_id(next((job.domain_id for job in usable if job.domain_id), ""))
+    digest = Job(
+        title=digest_job_title(utcnow(), scheduled=False),
+        author="",
+        source_url=encode_digest_source_url([job.id for job in usable]),
+        source_type=MANUAL_DIGEST_SOURCE,
+        domain_id=domain_id,
+        status="running",
+        stage="summarizing",
+        progress=80,
+    )
+    stamp_job_start(digest)
+    db.add(digest)
+    db.commit()
+    db.refresh(digest)
+    return digest
+
+
 def fill_digest_job(db: Session, job: Job) -> None:
-    log_id = (getattr(job, "schedule_log_id", "") or "").strip()
-    if not log_id:
-        raise SummarizeError("没有对应的定时运行，无法汇总")
-    sources = digest_sources(source_jobs_for_log(db, log_id))
+    sources = digest_sources(source_jobs_for_digest(db, job))
     if not sources:
         raise SummarizeError("没有可用的总结，无法汇总")
     raise_if_cancelled(job.id)

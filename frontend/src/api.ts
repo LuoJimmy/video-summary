@@ -443,6 +443,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ action, ids }),
     }),
+  digestJobs: (ids: string[]) =>
+    request<Job>("/api/jobs/digest", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
   resummarizeJob: (id: string) =>
     request<Job>(`/api/jobs/${id}/resummarize`, { method: "POST" }),
   proofreadJob: (id: string) =>
