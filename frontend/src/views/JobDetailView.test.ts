@@ -205,6 +205,46 @@ describe("任务详情播放器", () => {
     );
   });
 
+  it("刷新播放地址接口返回的报错走 toast，不占用播放提示", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({
+        status: "done",
+        stage: "done",
+        progress: 100,
+        source_type: "http_audio",
+        media_url: "https://bilivideo.com/a.m4s?deadline=1",
+      })
+    );
+    vi.mocked(api.jobMedia).mockResolvedValue({
+      url: "/api/jobs/job-1/play",
+      refreshed: false,
+      message: "B站请求失败：Illegal header value",
+    });
+
+    const el = await mountDetail();
+    expect(toast.error).toHaveBeenCalledWith(
+      "B站请求失败：Illegal header value"
+    );
+    expect(el.textContent).not.toContain("Illegal header value");
+    expect(el.textContent).toContain("首次播放会在本机转封装");
+  });
+
+  it("刷新播放地址请求失败时同样用 toast 提示", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({
+        status: "done",
+        stage: "done",
+        progress: 100,
+        media_url: "https://cdn.example.com/play.mp4",
+      })
+    );
+    vi.mocked(api.jobMedia).mockRejectedValue(new Error("502 Bad Gateway"));
+
+    const el = await mountDetail();
+    expect(toast.error).toHaveBeenCalledWith("502 Bad Gateway");
+    expect(el.textContent).not.toContain("502 Bad Gateway");
+  });
+
   it("显示原片创建时间", async () => {
     vi.mocked(api.job).mockResolvedValue(
       makeJob({
@@ -294,7 +334,9 @@ describe("回到顶部", () => {
     expect(el.textContent).toContain("生成总结");
     expect(el.textContent).toContain("重新提取");
     expect(el.textContent).not.toContain("重新校对转写");
-    const preview = el.querySelector("iframe.doc-preview") as HTMLIFrameElement | null;
+    const preview = el.querySelector(
+      "iframe.doc-preview"
+    ) as HTMLIFrameElement | null;
     expect(preview).not.toBeNull();
     expect(preview?.getAttribute("src") || preview?.src || "").toContain(
       "/api/jobs/job-1/file"
@@ -394,8 +436,12 @@ describe("回到顶部", () => {
     expect(btn).toBeTruthy();
     (btn as HTMLButtonElement).click();
     await flush();
-    const preview = el.querySelector("iframe.doc-preview") as HTMLIFrameElement | null;
-    expect(preview?.getAttribute("src") || preview?.src || "").toContain("#page=2");
+    const preview = el.querySelector(
+      "iframe.doc-preview"
+    ) as HTMLIFrameElement | null;
+    expect(preview?.getAttribute("src") || preview?.src || "").toContain(
+      "#page=2"
+    );
     expect(el.textContent).not.toContain("/tmp/report.pdf");
   });
 });

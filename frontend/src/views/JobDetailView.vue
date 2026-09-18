@@ -36,7 +36,15 @@ import {
   statusLabel,
 } from "../utils/time";
 import { toast } from "vue-sonner";
-import { documentPreviewKind, isDigestSource, isDocumentSource, locatorPage, needsMediaOverrideError, publicSourceUrl, sourceTypeLabel } from "../utils/source";
+import {
+  documentPreviewKind,
+  isDigestSource,
+  isDocumentSource,
+  locatorPage,
+  needsMediaOverrideError,
+  publicSourceUrl,
+  sourceTypeLabel,
+} from "../utils/source";
 
 const route = useRoute();
 const router = useRouter();
@@ -48,7 +56,8 @@ const fromKnowledge = computed(() => fromSource.value === "knowledge");
 const fromSchedule = computed(() => fromSource.value === "schedule");
 const backTo = computed(() => {
   if (fromKnowledge.value) return "/knowledge";
-  if (fromSchedule.value) return { path: "/settings", query: { tab: "schedule" } };
+  if (fromSchedule.value)
+    return { path: "/settings", query: { tab: "schedule" } };
   return "/";
 });
 const backLabel = computed(() => {
@@ -75,9 +84,7 @@ let timer: number | undefined;
 let clock: number | undefined;
 
 const hasTranscript = computed(() => Boolean(job.value?.transcript.length));
-const isDocument = computed(() =>
-  isDocumentSource(job.value?.source_type)
-);
+const isDocument = computed(() => isDocumentSource(job.value?.source_type));
 const isDigest = computed(() => isDigestSource(job.value?.source_type));
 const relatedJobs = computed(() => job.value?.related_jobs || []);
 const overviewHtml = computed(() =>
@@ -210,6 +217,13 @@ function assignPlaySrc(next: string, hint = "") {
   playHint.value = hint;
 }
 
+const FIRST_PLAY_HINT = "首次播放会在本机转封装，请稍候。";
+const playHintIsInfo = computed(() => playHint.value.startsWith("首次播放"));
+
+function hintForSrc(next: string) {
+  return next.startsWith("/api/") ? FIRST_PLAY_HINT : "";
+}
+
 async function load() {
   if (missingJob.value) return;
   try {
@@ -236,10 +250,7 @@ async function refreshPlayback() {
   }
   if (jobBusy.value) {
     const next = playbackSrcFromJob(job.value);
-    assignPlaySrc(
-      next,
-      next.startsWith("/api/") ? "首次播放会在本机转封装，请稍候。" : ""
-    );
+    assignPlaySrc(next, hintForSrc(next));
     return;
   }
   if (!job.value.media_url && !job.value.source_url.startsWith("http")) {
@@ -249,15 +260,15 @@ async function refreshPlayback() {
   try {
     const media = await api.jobMedia(job.value.id);
     const next = media.url || playbackSrcFromJob(job.value);
-    const hint =
-      media.message ||
-      (next.startsWith("/api/") ? "首次播放会在本机转封装，请稍候。" : "");
-    assignPlaySrc(next, hint);
+    // 接口报错走 toast：留在播放提示里会被播放器错误盖掉，只闪一下
+    if (media.message) toast.error(media.message);
+    assignPlaySrc(next, hintForSrc(next));
   } catch (err) {
     assignPlaySrc(
       playbackSrcFromJob(job.value) || `/api/jobs/${job.value.id}/play`,
-      err instanceof Error ? err.message : "刷新播放地址失败"
+      ""
     );
+    toast.error(apiErrorMessage(err, "刷新播放地址失败"));
   }
 }
 
@@ -339,7 +350,7 @@ function seekFromQuery() {
 }
 
 function onPlayerReady() {
-  if (playHint.value.startsWith("首次播放")) playHint.value = "";
+  if (playHint.value === FIRST_PLAY_HINT) playHint.value = "";
 }
 
 function onPlayerError(message: string) {
@@ -572,10 +583,7 @@ onBeforeUnmount(() => {
         @ready="onPlayerReady"
         @error="onPlayerError"
       />
-      <p
-        v-if="playHint"
-        :class="playHint.startsWith('首次播放') ? 'msg' : 'error'"
-      >
+      <p v-if="playHint" :class="playHintIsInfo ? 'msg' : 'error'">
         {{ playHint }}
       </p>
       <p class="msg">
@@ -583,11 +591,7 @@ onBeforeUnmount(() => {
       </p>
     </section>
 
-    <section
-      v-if="isDocument && documentFileSrc"
-      id="doc-preview"
-      class="card"
-    >
+    <section v-if="isDocument && documentFileSrc" id="doc-preview" class="card">
       <div class="row mb-3">
         <strong>原件预览</strong>
         <Button v-if="originalHttpUrl" variant="outline" size="sm" as-child>
@@ -596,10 +600,7 @@ onBeforeUnmount(() => {
           >
         </Button>
         <Button variant="outline" size="sm" as-child>
-          <a
-            :href="`${documentFileSrc}?raw=1`"
-            target="_blank"
-            rel="noreferrer"
+          <a :href="`${documentFileSrc}?raw=1`" target="_blank" rel="noreferrer"
             >下载原文件</a
           >
         </Button>
