@@ -620,6 +620,47 @@ def test_bilibili_list_catalog_by_mid():
 
 
 @respx.mock
+def test_bilibili_list_catalog_flattens_multiline_cookie():
+    from app.services.ingest.bilibili import BilibiliAdapter
+
+    cookies: list[str] = []
+
+    def handler(request):
+        cookies.append(request.headers.get("cookie", ""))
+        return Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "list": {
+                        "vlist": [
+                            {
+                                "bvid": "BV1a4awzsENn",
+                                "title": "登录态稿件",
+                                "author": "来去由心",
+                                "created": 1700000000,
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+
+    respx.get("https://api.bilibili.com/x/web-interface/nav").mock(
+        return_value=Response(
+            200, json={"code": 0, "data": {"wbi_img": {"img_url": "", "sub_url": ""}}}
+        )
+    )
+    respx.get("https://api.bilibili.com/x/space/arc/search").mock(side_effect=handler)
+
+    auth = RequestAuth(cookie="Buvid=abc\nDedeUserID=396771578\nSESSDATA=xyz")
+    items = BilibiliAdapter().list_catalog(auth, "11430504")
+    assert items[0].title == "登录态稿件"
+    assert cookies
+    assert set(cookies) == {"Buvid=abc; DedeUserID=396771578; SESSDATA=xyz"}
+
+
+@respx.mock
 def test_bilibili_list_catalog_keeps_items_when_later_page_rate_limited(monkeypatch):
     from app.services.ingest.bilibili import BilibiliAdapter
 

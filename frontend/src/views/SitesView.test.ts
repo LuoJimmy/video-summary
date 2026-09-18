@@ -141,6 +141,35 @@ describe("站点页", () => {
     expect(cookie.value).toBe("sid=from-profile");
   });
 
+  it("粘贴多行 Cookie 会在失焦后合并成一行", async () => {
+    const el = await mountSites(
+      [makeSite({ cookie_override: "" })],
+      [makeProfile({ cookie: "" })]
+    );
+    const cookie = el.querySelector("textarea") as HTMLTextAreaElement;
+    cookie.value = "Buvid=abc\nDedeUserID=396771578\nSESSDATA=xyz";
+    cookie.dispatchEvent(new Event("input"));
+    await flush();
+    cookie.dispatchEvent(new Event("blur"));
+    await flush();
+    expect(cookie.value).toBe("Buvid=abc; DedeUserID=396771578; SESSDATA=xyz");
+
+    vi.mocked(api.saveSite).mockResolvedValue(
+      makeSite({ cookie_override: cookie.value })
+    );
+    const saveBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("保存站点")
+    );
+    saveBtn?.click();
+    await flush();
+    expect(api.saveSite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cookie_override: "Buvid=abc; DedeUserID=396771578; SESSDATA=xyz",
+      }),
+      expect.anything()
+    );
+  });
+
   it("可以添加同类小鹅通店铺", async () => {
     const created = makeSite({
       id: "s-xiaoe-2",

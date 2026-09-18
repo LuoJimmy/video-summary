@@ -5,6 +5,7 @@ from app.database import get_db
 from app.models import AuthProfile
 from app.schemas import AuthProfileIn, AuthProfileOut
 from app.serializers import profile_out
+from app.services.authctx import normalize_cookie
 from app.services.jsonutil import dumps
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
@@ -20,7 +21,7 @@ def list_profiles(db: Session = Depends(get_db)) -> list[AuthProfileOut]:
 def create_profile(payload: AuthProfileIn, db: Session = Depends(get_db)) -> AuthProfileOut:
     row = AuthProfile(
         name=payload.name,
-        cookie=payload.cookie,
+        cookie=normalize_cookie(payload.cookie),
         extra_headers=dumps(payload.extra_headers),
         notes=payload.notes,
     )
@@ -36,7 +37,7 @@ def update_profile(profile_id: str, payload: AuthProfileIn, db: Session = Depend
     if row is None:
         raise HTTPException(404, "登录档案不存在")
     row.name = payload.name
-    row.cookie = payload.cookie
+    row.cookie = normalize_cookie(payload.cookie)
     row.extra_headers = dumps(payload.extra_headers)
     row.notes = payload.notes
     db.commit()

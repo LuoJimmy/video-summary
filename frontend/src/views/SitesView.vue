@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api, type AuthProfile, type Site } from "../api";
+import { normalizeCookie } from "../utils/cookie";
 import { toast } from "vue-sonner";
 
 const COOKIE_HINTS: Record<string, string> = {
@@ -108,6 +109,10 @@ function hydrateCookies() {
   }
 }
 
+function flattenCookie(site: Site) {
+  site.cookie_override = normalizeCookie(site.cookie_override);
+}
+
 function selectSite(preferred?: string) {
   const next = preferred || selectedId.value;
   if (next && sites.value.some((item) => item.id === next)) {
@@ -137,7 +142,9 @@ function nextName(adapter: string) {
   };
   const base = labels[adapter] || "站点";
   const used = new Set(
-    sites.value.filter((item) => item.adapter === adapter).map((item) => item.name)
+    sites.value
+      .filter((item) => item.adapter === adapter)
+      .map((item) => item.name)
   );
   if (!used.has(base)) return base;
   let index = 2;
@@ -252,8 +259,8 @@ onMounted(refresh);
 <template>
   <h1>站点</h1>
   <p class="sub">
-    小鹅通、约牛、B 站可添加多条：每个店铺或 UP
-    单独命名。Cookie 可共用同一登录档案。通用直链也可以自行增减。
+    小鹅通、约牛、B 站可添加多条：每个店铺或 UP 单独命名。Cookie
+    可共用同一登录档案。通用直链也可以自行增减。
   </p>
 
   <section class="card">
@@ -322,7 +329,11 @@ onMounted(refresh);
         <Textarea
           v-model="current.cookie_override"
           :placeholder="cookiePlaceholder(current)"
+          @blur="flattenCookie(current)"
         />
+        <p class="msg">
+          整段粘贴即可：多行会自动合并成一行，「Cookie:」前缀会自动去掉。
+        </p>
       </div>
       <div class="row mt-3">
         <Button type="button" :disabled="saving" @click="saveCurrent"

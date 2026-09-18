@@ -5,6 +5,7 @@ from app.database import get_db
 from app.models import ScheduleSite, Site
 from app.schemas import SiteIn, SiteOut
 from app.serializers import site_out
+from app.services.authctx import normalize_cookie
 from app.services.jsonutil import dumps
 
 router = APIRouter(prefix="/api/sites", tags=["sites"])
@@ -23,7 +24,7 @@ def create_site(payload: SiteIn, db: Session = Depends(get_db)) -> SiteOut:
         adapter=payload.adapter,
         domain_patterns=dumps(payload.domain_patterns),
         auth_profile_id=payload.auth_profile_id,
-        cookie_override=payload.cookie_override,
+        cookie_override=normalize_cookie(payload.cookie_override),
         extra_headers=dumps(payload.extra_headers),
         enabled=payload.enabled,
         notes=payload.notes,
@@ -43,7 +44,7 @@ def update_site(site_id: str, payload: SiteIn, db: Session = Depends(get_db)) ->
     row.adapter = payload.adapter
     row.domain_patterns = dumps(payload.domain_patterns)
     row.auth_profile_id = payload.auth_profile_id
-    row.cookie_override = payload.cookie_override
+    row.cookie_override = normalize_cookie(payload.cookie_override)
     row.extra_headers = dumps(payload.extra_headers)
     row.enabled = payload.enabled
     row.notes = payload.notes
