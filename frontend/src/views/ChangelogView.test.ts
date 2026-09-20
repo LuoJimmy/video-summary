@@ -38,7 +38,7 @@ describe("更新日志页", () => {
     const el = await mountChangelog();
     expect(el.querySelector("h1")?.textContent).toBe("更新日志");
     expect(el.textContent).toContain(appVersion);
-    expect(el.textContent).toContain("2026-09-05");
+    expect(el.textContent).toContain("2026-09-20");
     expect(el.textContent).toContain("新增");
     const back = el.querySelector('a[href="/settings?tab=about"]');
     expect(back?.getAttribute("aria-label")).toBe("返回设置");

@@ -84,13 +84,13 @@ docker run --rm -p 8765:8765 \
 正式镜像发布在 GitHub Container Registry，标签与仓库 tag 对齐：
 
 ```bash
-docker pull ghcr.io/luojimmy/video-summary:1.0.0
+docker pull ghcr.io/luojimmy/video-summary:1.1.0
 docker run --rm -p 8765:8765 \
   -e DATA_DIR=/data \
   -e DOWNLOAD_DIR=/downloads \
   -v "$PWD/data:/data" \
   -v "$PWD/downloads:/downloads" \
-  ghcr.io/luojimmy/video-summary:1.0.0
+  ghcr.io/luojimmy/video-summary:1.1.0
 ```
 
 也可使用 `ghcr.io/luojimmy/video-summary:latest`。私有仓库拉取前先 `docker login ghcr.io`。
