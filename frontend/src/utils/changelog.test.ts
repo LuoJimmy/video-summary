@@ -51,10 +51,10 @@ describe("parseChangelog", () => {
     expect(parseChangelog("## 未发布\n\n- 草稿")).toEqual([]);
   });
 
-  it("仓库更新日志包含 1.1.0", () => {
+  it("仓库更新日志包含 1.2.0", () => {
     const releases = parseChangelog(changelogMarkdown);
-    expect(releases[0]?.version).toBe("1.1.0");
-    expect(releases[0]?.date).toBe("2026-09-20");
+    expect(releases[0]?.version).toBe("1.2.0");
+    expect(releases[0]?.date).toBe("2026-09-21");
     expect(releases[0]?.sections.some((item) => item.items.length > 0)).toBe(
       true
     );
