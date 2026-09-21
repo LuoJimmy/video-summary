@@ -1000,6 +1000,133 @@ h3 {
   color: var(--bad);
   background: color-mix(in srgb, var(--bad) 16%, transparent);
 }
+.local-picker {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.local-picker-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.local-path {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.local-modes {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.local-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.local-mode:hover,
+.local-mode.is-active {
+  color: var(--strong);
+}
+.local-mode input {
+  margin: 0;
+}
+.local-picker-dialog {
+  max-height: min(90vh, 52rem);
+  overflow: auto;
+}
+.local-picker-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.local-picker-search .field {
+  flex: 1 1 18rem;
+  min-width: 8rem;
+}
+.local-picker-table-wrap {
+  height: 20rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.local-picker-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.local-picker-table th,
+.local-picker-table td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.local-picker-table td {
+  overflow: hidden;
+}
+.local-picker-table th {
+  color: var(--muted);
+  font-weight: 500;
+  background: var(--panel-2);
+  position: sticky;
+  top: 0;
+}
+.local-picker-check {
+  width: 2.25rem;
+}
+.local-picker-size {
+  width: 7.5rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.local-picker-dir,
+.local-picker-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.125rem 0.25rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.local-picker-dir:hover,
+.local-picker-file:hover {
+  background: var(--panel-2);
+  color: var(--strong);
+}
+.local-picker-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  max-height: 6rem;
+  overflow: auto;
+}
+.local-picker-chip {
+  max-width: 100%;
+}
 @media (hover: none) {
   .file-remove {
     opacity: 1;

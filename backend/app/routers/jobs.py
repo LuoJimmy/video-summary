@@ -25,6 +25,8 @@ from app.schemas import (
     JobOut,
     JobRetryIn,
     JobUpdateIn,
+    LocalEntriesOut,
+    LocalRootOut,
     ResolvePreview,
 )
 from app.serializers import job_out
@@ -40,6 +42,7 @@ from app.services.document import (
 )
 from app.services.ingest.base import CatalogError, CATALOG_BATCH_LIMIT, is_document_source, local_source_type
 from app.services.ingest.registry import detect_catalog, list_catalog, resolve_media
+from app.services.localfs import LocalFsError, list_dir, media_root_status, scan_dir
 from app.services.pipeline import get_pipeline
 from app.services.media import MediaError, probe_creation_time
 from app.services.playback import ensure_play_file, refresh_job_media
@@ -201,6 +204,29 @@ def list_jobs(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/local-root", response_model=LocalRootOut)
+def get_local_root() -> LocalRootOut:
+    """「本地任务」是否显示挂载目录入口：没配 MEDIA_DIR 或目录不存在时为 false。"""
+    return media_root_status()
+
+
+@router.get("/local-entries", response_model=LocalEntriesOut)
+def list_local_entries(
+    path: str = Query("", max_length=1024),
+    query: str = Query("", max_length=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    recursive: bool = Query(False),
+) -> LocalEntriesOut:
+    """浏览挂载到容器里的目录，供「本地任务」多选文件或文件夹。"""
+    try:
+        if recursive:
+            return scan_dir(path)
+        return list_dir(path, query=query, page=page, page_size=page_size)
+    except LocalFsError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/{job_id}", response_model=JobOut)

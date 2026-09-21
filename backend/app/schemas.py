@@ -241,6 +241,34 @@ class ResolvePreview(BaseModel):
     items: list[CatalogPreviewItem] = Field(default_factory=list)
 
 
+class LocalEntryOut(BaseModel):
+    name: str
+    path: str
+    kind: str = "file"
+    size: int = 0
+    modified_at: datetime | None = None
+    supported: bool = False
+
+
+class LocalEntriesOut(BaseModel):
+    root: str = ""
+    path: str = ""
+    parent: str = ""
+    recursive: bool = False
+    query: str = ""
+    page: int = 1
+    page_size: int = 50
+    total: int = 0
+    entries: list[LocalEntryOut] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class LocalRootOut(BaseModel):
+    enabled: bool = False
+    root: str = ""
+    scan_limit: int = 1000
+
+
 class JobCatalogIn(JobCreateIn):
     items: list[CatalogPreviewItem] = Field(min_length=1, max_length=200)
     next_cursor: str = ""

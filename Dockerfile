@@ -25,8 +25,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
 COPY --from=frontend /ui/dist ./static
 
+# 「本地任务」的默认浏览根，未挂载任何目录时也能正常打开空目录
+RUN mkdir -p /media
+
 ENV DATA_DIR=/data \
     DOWNLOAD_DIR=/downloads \
+    MEDIA_DIR=/media \
     STATIC_DIR=/app/static \
     HF_HOME=/data/hf \
     HF_ENDPOINT=https://hf-mirror.com \

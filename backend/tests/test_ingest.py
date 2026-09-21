@@ -34,6 +34,23 @@ def test_generic_local_and_hls(tmp_path):
     assert hls.needs_media_url is False
 
 
+def test_generic_reports_local_path_missing_in_container():
+    adapter = GenericAdapter()
+    plain = adapter.resolve("/vs-no-such-dir/a.mp4", RequestAuth())
+    assert plain.needs_media_url is True
+    assert "本地任务" in plain.message
+
+    file_url = adapter.resolve("file:///vs-no-such-dir/a.mp4", RequestAuth())
+    assert file_url.needs_media_url is True
+    assert "本地任务" in file_url.message
+
+    windows = adapter.resolve("D:\\media\\a.mp4", RequestAuth())
+    assert windows.needs_media_url is True
+
+    protocol_relative = adapter.resolve("//cdn.example.com/a.mp4", RequestAuth())
+    assert protocol_relative.source_type == "http_video"
+
+
 def test_generic_document_and_web_page(tmp_path):
     from app.services.ingest.base import classify_direct_url, is_document_source
 

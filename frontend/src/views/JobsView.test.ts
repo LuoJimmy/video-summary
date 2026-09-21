@@ -15,6 +15,8 @@ vi.mock("../api", () => ({
     createJob: vi.fn(),
     fromCatalog: vi.fn(),
     uploadJob: vi.fn(),
+    localEntries: vi.fn(),
+    localRoot: vi.fn(),
     batchJobs: vi.fn(),
     digestJobs: vi.fn(),
     settings: vi.fn(),
@@ -56,7 +58,11 @@ async function flush() {
   await nextTick();
 }
 
-async function mountJobs(items: Job[] = [makeJob()], total = items.length) {
+async function mountJobs(
+  items: Job[] = [makeJob()],
+  total = items.length,
+  options: { mediaRoot?: boolean } = {}
+) {
   vi.mocked(api.jobs).mockResolvedValue({
     items,
     total,
@@ -64,6 +70,23 @@ async function mountJobs(items: Job[] = [makeJob()], total = items.length) {
     page_size: 10,
   });
   vi.mocked(api.sites).mockResolvedValue([]);
+  vi.mocked(api.localRoot).mockResolvedValue(
+    options.mediaRoot
+      ? { enabled: true, root: "/media", scan_limit: 1000 }
+      : { enabled: false, root: "", scan_limit: 1000 }
+  );
+  vi.mocked(api.localEntries).mockResolvedValue({
+    root: "/media",
+    path: "/media",
+    parent: "",
+    recursive: false,
+    query: "",
+    page: 1,
+    page_size: 50,
+    total: 0,
+    truncated: false,
+    entries: [],
+  });
   vi.mocked(api.settings).mockResolvedValue({
     transcribe_base_url: "",
     transcribe_api_key: "",
@@ -117,10 +140,19 @@ beforeEach(() => {
   vi.mocked(api.fromCatalog).mockReset();
   vi.mocked(api.preview).mockReset();
   vi.mocked(api.uploadJob).mockReset();
+  vi.mocked(api.localEntries).mockReset();
+  vi.mocked(api.localRoot).mockReset();
   vi.mocked(api.batchJobs).mockReset();
   vi.mocked(api.digestJobs).mockReset();
   vi.mocked(api.deleteJob).mockReset();
 });
+
+function clickLocalMode(el: HTMLElement, value: "upload" | "media") {
+  const radio = el.querySelector(
+    `input[type="radio"][name="local-mode"][value="${value}"]`
+  ) as HTMLInputElement;
+  radio.click();
+}
 
 function clickNamed(el: HTMLElement, name: string) {
   const btn = [...el.querySelectorAll("button")].find(
@@ -459,6 +491,126 @@ describe("批量创建", () => {
     expect(api.uploadJob).toHaveBeenCalledTimes(1);
     expect(vi.mocked(api.uploadJob).mock.calls[0][0].name).toBe("b.mp4");
   });
+
+  it("没有挂载媒体目录时只有本地上传单选", async () => {
+    const el = await mountJobs();
+    clickCreateTab(el, "本地任务");
+    await flush();
+    const radios = el.querySelectorAll(
+      'input[type="radio"][name="local-mode"]'
+    );
+    expect(radios.length).toBe(1);
+    expect((radios[0] as HTMLInputElement).value).toBe("upload");
+    expect((radios[0] as HTMLInputElement).checked).toBe(true);
+    expect(el.textContent).toContain("从本地选择");
+    expect(el.textContent).not.toContain("从挂载目录选择");
+    expect(api.localEntries).not.toHaveBeenCalled();
+  });
+
+  it("有挂载目录时从弹框多选文件创建任务", async () => {
+    const el = await mountJobs([makeJob()], 1, { mediaRoot: true });
+    vi.mocked(api.localEntries).mockResolvedValue({
+      root: "/media",
+      path: "/media",
+      parent: "",
+      recursive: false,
+      query: "",
+      page: 1,
+      page_size: 50,
+      total: 2,
+      truncated: false,
+      entries: [
+        {
+          name: "2026",
+          path: "/media/2026",
+          kind: "dir",
+          size: 0,
+          modified_at: null,
+          supported: false,
+        },
+        {
+          name: "a.mp4",
+          path: "/media/a.mp4",
+          kind: "file",
+          size: 2048,
+          modified_at: null,
+          supported: true,
+        },
+      ],
+    });
+    clickCreateTab(el, "本地任务");
+    await flush();
+    expect(el.textContent).toContain("从挂载目录选择");
+
+    clickLocalMode(el, "media");
+    await flush();
+    clickNamed(el, "选择文件 / 文件夹");
+    await flush();
+    await flush();
+
+    const dialog = document.body.querySelector(
+      ".local-picker-dialog"
+    ) as HTMLElement | null;
+    expect(dialog).toBeTruthy();
+    expect(api.localEntries).toHaveBeenCalledWith("/media", {
+      query: "",
+      page: 1,
+      pageSize: 50,
+    });
+
+    const checkbox = dialog?.querySelector(
+      '[aria-label="选择 a.mp4"]'
+    ) as HTMLElement;
+    checkbox.click();
+    await flush();
+    clickNamed(dialog as HTMLElement, "确定");
+    await flush();
+
+    expect(el.textContent).toContain("已选 1 / 1000");
+    vi.mocked(api.createJob).mockResolvedValue(makeJob({ id: "job-media" }));
+    clickNamed(el, "创建 1 个任务");
+    await flush();
+    await flush();
+    await flush();
+    expect(api.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ source_url: "/media/a.mp4" })
+    );
+  });
+
+  it("挂载目录模式下提供选择入口并可切回上传", async () => {
+    const el = await mountJobs([makeJob()], 1, { mediaRoot: true });
+    clickCreateTab(el, "本地任务");
+    await flush();
+    const radios = el.querySelectorAll(
+      'input[type="radio"][name="local-mode"]'
+    );
+    expect(radios.length).toBe(2);
+
+    clickLocalMode(el, "media");
+    await flush();
+    expect(
+      (
+        el.querySelector(
+          'input[type="radio"][name="local-mode"][value="media"]'
+        ) as HTMLInputElement
+      ).checked
+    ).toBe(true);
+    expect(el.textContent).toContain("已选 0 / 1000");
+    expect(el.textContent).toContain("选择文件 / 文件夹");
+    expect(el.textContent).not.toContain("上传并处理");
+    expect(api.localEntries).not.toHaveBeenCalled();
+
+    clickLocalMode(el, "upload");
+    await flush();
+    expect(
+      (
+        el.querySelector(
+          'input[type="radio"][name="local-mode"][value="upload"]'
+        ) as HTMLInputElement
+      ).checked
+    ).toBe(true);
+    expect(el.textContent).toContain("上传并处理");
+  });
 });
 
 describe("批量管理", () => {
@@ -713,8 +865,8 @@ describe("整站目录拉取", () => {
         (btn) => btn.textContent?.trim() === "预解析"
       )
     ).toBe(false);
-    const start = [...el.querySelectorAll("button")].find(
-      (btn) => btn.textContent?.includes("开始转写总结")
+    const start = [...el.querySelectorAll("button")].find((btn) =>
+      btn.textContent?.includes("开始转写总结")
     ) as HTMLButtonElement;
     start.click();
     await flush();

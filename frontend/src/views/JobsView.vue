@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowDown, ArrowUp, Info, Loader2, Upload, X } from "@lucide/vue";
+import {
+  ArrowDown,
+  ArrowUp,
+  Folder,
+  Info,
+  Loader2,
+  Upload,
+  X,
+} from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -15,7 +23,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { api, type CatalogPreviewItem, type Job, type JobCatalogResult, type ResolvePreview, type Site } from "../api";
+import {
+  api,
+  apiErrorMessage,
+  type CatalogPreviewItem,
+  type Job,
+  type JobCatalogResult,
+  type LocalPick,
+  type ResolvePreview,
+  type Site,
+} from "../api";
 import type { DomainPack } from "../utils/domain";
 import { emptyDomainPack } from "../utils/domain";
 import {
@@ -29,6 +46,7 @@ import {
 import CatalogImportDialog from "../components/CatalogImportDialog.vue";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
 import JobTitleEditor from "../components/JobTitleEditor.vue";
+import LocalPickerDialog from "../components/LocalPickerDialog.vue";
 import Pagination from "../components/Pagination.vue";
 import { pageAfterSizeChange } from "../utils/pager";
 import {
@@ -42,10 +60,12 @@ import {
 import { toast } from "vue-sonner";
 
 const DEFAULT_PAGE_SIZE = 10;
+const LOCAL_PICK_LIMIT = 1000;
 const LOCAL_FILE_ACCEPT =
   "video/*,audio/*,.pdf,.doc,.docx,.md,.txt,.html,.htm,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/html";
 const router = useRouter();
 type CreateTab = "online" | "local";
+type LocalMode = "upload" | "media";
 const createTabs: { id: CreateTab; label: string }[] = [
   { id: "online", label: "在线任务" },
   { id: "local", label: "本地任务" },
@@ -76,6 +96,12 @@ const catalogResume = ref<{
 let catalogWait: ((items: CatalogPreviewItem[] | null) => void) | null = null;
 const files = ref<File[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
+const localRootEnabled = ref(false);
+const localRoot = ref("");
+const localScanLimit = ref(LOCAL_PICK_LIMIT);
+const localMode = ref<LocalMode>("upload");
+const localPickerOpen = ref(false);
+const localPicked = ref<LocalPick[]>([]);
 const summarizeDocument = ref(false);
 const creating = ref(false);
 type ListingAction = "create" | "continue";
@@ -139,7 +165,8 @@ const canBatchRetry = computed(
 );
 const canBatchDigest = computed(
   () =>
-    selectedJobs.value.filter(canDigestJob).length + unknownSelectedCount.value >=
+    selectedJobs.value.filter(canDigestJob).length +
+      unknownSelectedCount.value >=
     2
 );
 const pageSelectState = computed(() => {
@@ -391,7 +418,7 @@ function toastBatchAction(
     toast.success(`${doneLabel} ${ok} 个任务`);
     return;
   }
-    toast.warning(`成功 ${ok}，失败 ${failed}`);
+  toast.warning(`成功 ${ok}，失败 ${failed}`);
 }
 
 async function batchDigest() {
@@ -517,9 +544,7 @@ function applyCatalogResult(result: JobCatalogResult, url: string) {
       cursor: result.next_cursor,
       label: result.catalog_label,
     };
-    toast.warning(
-      result.message || "已创建任务。创建区可继续拉取下一批。"
-    );
+    toast.warning(result.message || "已创建任务。创建区可继续拉取下一批。");
     return;
   }
   catalogResume.value = null;
@@ -527,7 +552,9 @@ function applyCatalogResult(result: JobCatalogResult, url: string) {
     toast.warning(result.message || "已创建任务，更早内容无法继续自动拉取。");
     return;
   }
-  toast.success(result.message || `已创建 ${result.created} 个任务，目录已拉完。`);
+  toast.success(
+    result.message || `已创建 ${result.created} 个任务，目录已拉完。`
+  );
 }
 
 async function importCatalog(
@@ -555,7 +582,11 @@ async function importCatalog(
     toast.error(listed.message || "没有可拉取的视频");
     if (listed.truncated) {
       catalogResume.value = listed.next_cursor
-        ? { sourceUrl: url, cursor: listed.next_cursor, label: listed.catalog_label || "" }
+        ? {
+            sourceUrl: url,
+            cursor: listed.next_cursor,
+            label: listed.catalog_label || "",
+          }
         : catalogResume.value;
     }
     return false;
@@ -651,7 +682,8 @@ async function createFromUrl() {
     for (const url of urls) {
       if (isCatalogSourceUrl(url)) {
         try {
-          importedCatalog = (await importCatalog(url, false)) || importedCatalog;
+          importedCatalog =
+            (await importCatalog(url, false)) || importedCatalog;
         } catch (err) {
           failed += 1;
           toast.error(err instanceof Error ? err.message : "拉取目录失败");
@@ -745,6 +777,89 @@ function removeLocalFile(index: number) {
   if (input) input.value = "";
 }
 
+async function loadLocalRoot() {
+  try {
+    const payload = await api.localRoot();
+    localRootEnabled.value = payload.enabled;
+    localRoot.value = payload.root;
+    localScanLimit.value = payload.scan_limit;
+    if (!payload.enabled && localMode.value === "media")
+      localMode.value = "upload";
+  } catch {
+    localRootEnabled.value = false;
+  }
+}
+
+function setLocalMode(mode: LocalMode) {
+  if (mode === "media" && !localRootEnabled.value) return;
+  localMode.value = mode;
+}
+
+function openLocalPicker() {
+  if (!localRootEnabled.value) return;
+  localPickerOpen.value = true;
+}
+
+function closeLocalPicker() {
+  localPickerOpen.value = false;
+}
+
+function confirmLocalPicker(items: LocalPick[]) {
+  localPicked.value = items;
+  localPickerOpen.value = false;
+}
+
+function removeLocalPicked(path: string) {
+  localPicked.value = localPicked.value.filter((item) => item.path !== path);
+}
+
+function clearLocalPicked() {
+  localPicked.value = [];
+}
+
+async function createFromLocalPicked() {
+  const picked = localPicked.value;
+  if (!picked.length) return;
+  if (picked.length > LOCAL_PICK_LIMIT) {
+    toast.error(`一次最多创建 ${LOCAL_PICK_LIMIT} 个任务`);
+    return;
+  }
+  if (jobBusy.value) return;
+  creating.value = true;
+  const created: Job[] = [];
+  let failed = 0;
+  try {
+    for (const item of picked) {
+      try {
+        created.push(
+          await api.createJob({
+            source_url: item.path,
+            media_url_override: "",
+            title: picked.length === 1 ? title.value || item.name : item.name,
+            author: author.value,
+            site_id: siteId.value || null,
+            domain_id: domainId.value || "a-share",
+            summarize_document: summarizeDocument.value,
+          })
+        );
+      } catch (err) {
+        failed += 1;
+        if (picked.length === 1) {
+          toast.error(apiErrorMessage(err, "创建失败"));
+        }
+      }
+    }
+    if (picked.length === 1) {
+      if (created[0]) await router.push(`/jobs/${created[0].id}`);
+      return;
+    }
+    localPicked.value = [];
+    await finishCreated(created, failed, "创建");
+  } finally {
+    creating.value = false;
+  }
+}
+
 function localFileKey(item: File, index: number) {
   return `${item.name}-${item.size}-${item.lastModified}-${index}`;
 }
@@ -788,6 +903,7 @@ function jobSourceLine(job: Job) {
 }
 
 onMounted(async () => {
+  void loadLocalRoot();
   await refresh();
   syncClock();
   timer = window.setInterval(async () => {
@@ -903,8 +1019,37 @@ onBeforeUnmount(() => {
       role="tabpanel"
       aria-labelledby="create-tab-local"
     >
-      <div class="field">
-        <Label for="local-file">上传本地视频 / 音频 / 文档</Label>
+      <div class="local-modes" role="radiogroup" aria-label="本地任务来源">
+        <label
+          class="local-mode"
+          :class="{ 'is-active': localMode === 'upload' }"
+        >
+          <input
+            type="radio"
+            name="local-mode"
+            value="upload"
+            :checked="localMode === 'upload'"
+            @change="setLocalMode('upload')"
+          />
+          <span>从本地选择</span>
+        </label>
+        <label
+          v-if="localRootEnabled"
+          class="local-mode"
+          :class="{ 'is-active': localMode === 'media' }"
+        >
+          <input
+            type="radio"
+            name="local-mode"
+            value="media"
+            :checked="localMode === 'media'"
+            @change="setLocalMode('media')"
+          />
+          <span>从挂载目录选择</span>
+        </label>
+      </div>
+      <div v-if="localMode === 'upload'" class="field mt-4">
+        <!-- <Label for="local-file">上传本地视频 / 音频 / 文档</Label> -->
         <div class="upload-picker">
           <input
             id="local-file"
@@ -941,6 +1086,41 @@ onBeforeUnmount(() => {
           </li>
         </ul>
       </div>
+      <div v-else class="field mt-4">
+        <!-- <Label>从挂载目录选择</Label> -->
+        <div class="local-picker-bar">
+          <Button variant="outline" type="button" @click="openLocalPicker">
+            <Folder aria-hidden="true" />选择文件 / 文件夹
+          </Button>
+          <span class="msg"
+            >已选 {{ localPicked.length }} / {{ LOCAL_PICK_LIMIT }}</span
+          >
+          <Button
+            v-if="localPicked.length"
+            variant="ghost"
+            type="button"
+            @click="clearLocalPicked"
+            >清空</Button
+          >
+        </div>
+        <ul v-if="localPicked.length" class="file-name-list">
+          <li
+            v-for="item in localPicked"
+            :key="item.path"
+            class="file-name-item"
+          >
+            <span class="file-name-text">{{ item.name }}</span>
+            <button
+              type="button"
+              class="file-remove"
+              :aria-label="`移除 ${item.name}`"
+              @click="removeLocalPicked(item.path)"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </li>
+        </ul>
+      </div>
       <div class="grid two mt-4">
         <div v-if="files.length <= 1" class="field field-md">
           <Label>标题（可选）</Label>
@@ -968,6 +1148,15 @@ onBeforeUnmount(() => {
           </Select>
         </div>
       </div>
+      <LocalPickerDialog
+        :open="localPickerOpen"
+        :root="localRoot"
+        :selected="localPicked"
+        :limit="LOCAL_PICK_LIMIT"
+        :scan-limit="localScanLimit"
+        @close="closeLocalPicker"
+        @confirm="confirmLocalPicker"
+      />
     </div>
 
     <div class="mt-4 flex items-center gap-2">
@@ -1016,15 +1205,9 @@ onBeforeUnmount(() => {
       >
     </div>
     <p v-if="catalogResume && createTab === 'online'" class="msg mt-3">
-      {{
-        preview?.message ||
-        `该${catalogResume.label}还有后续内容。`
-      }}
+      {{ preview?.message || `该${catalogResume.label}还有后续内容。` }}
     </p>
-    <p
-      v-else-if="preview && createTab === 'online'"
-      class="msg mt-3"
-    >
+    <p v-else-if="preview && createTab === 'online'" class="msg mt-3">
       <template v-if="preview.catalog">
         识别为 {{ preview.catalog_label }}，本批 {{ preview.listed }} 条，已存在
         {{ preview.existing }} 条将跳过。
@@ -1038,9 +1221,24 @@ onBeforeUnmount(() => {
       </template>
     </p>
     <div v-show="createTab === 'local'" class="row mt-4">
-      <Button type="button" :disabled="jobBusy" @click="createFromFile"
+      <Button
+        v-if="localMode === 'upload'"
+        type="button"
+        :disabled="jobBusy"
+        @click="createFromFile"
         >上传并处理</Button
       >
+      <template v-else>
+        <Button
+          type="button"
+          :disabled="jobBusy || !localPicked.length"
+          @click="createFromLocalPicked"
+          >创建 {{ localPicked.length }} 个任务</Button
+        >
+        <Button variant="outline" type="button" @click="openLocalPicker"
+          >选择文件 / 文件夹</Button
+        >
+      </template>
     </div>
   </section>
 

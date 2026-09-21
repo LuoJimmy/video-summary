@@ -28,6 +28,8 @@ flowchart LR
 
 默认 Docker 镜像只安装 FFmpeg 和 `libgomp1`，不装 Tesseract / LibreOffice。OCR 与旧版 `.doc` 在任务需要时（或设置页预装）下载到 `DATA_DIR/plugins`，容器重建后仍然保留。
 
+容器同样看不到宿主机文件系统。要处理宿主机上的文件，把宿主机目录挂到容器（compose 变量 `VIDEO_SUMMARY_MEDIA` → `/media`，即 `MEDIA_DIR`）：`app/services/localfs.py` 会列出该根目录下的文件夹与受支持文件，界面在「本地任务」里多选或整目录加入，勾选后按容器内路径建任务，再交给 `generic` 适配器按本地媒体处理。浏览被限制在根目录内，容器只读挂载。
+
 ## 登录态打通
 
 `AuthProfile` 保存一套 Cookie。`Site.domain_patterns` 决定哪些主机名使用该档案。小鹅通短链域与店铺域、约牛页面域与直播域都可以挂到同一档案，无需重复粘贴。

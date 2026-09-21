@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     app_name: str = "Video Summary"
     data_dir: Path = Path(__file__).resolve().parent.parent / "data"
     download_dir: str = ""
+    media_dir: str = ""
     static_dir: str = ""
     database_url: str = ""
     cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8765,http://localhost:8765"

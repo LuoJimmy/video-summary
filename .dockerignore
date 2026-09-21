@@ -12,6 +12,7 @@ dist
 **/.env
 backend/data
 frontend/dist
+media
 *.log
 .idea
 .vscode

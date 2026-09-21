@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -11,6 +12,28 @@ from app.services.ingest.base import (
 )
 from app.services.media import probe_creation_time
 from app.services.sourcetime import file_created_at
+
+
+_LOCAL_FILE_MISSING_HINT = (
+    "容器里找不到这个本地文件。Docker 部署请在「本地任务」里选择挂载目录中的文件，"
+    "或把宿主机目录挂到容器的 MEDIA_DIR；本机运行请检查路径拼写。"
+)
+
+
+def _local_media_path(target: str) -> Path | None:
+    """容器里能直接读到的本地文件，才按本地媒体处理。"""
+    path = Path(target)
+    return path.resolve() if path.exists() else None
+
+
+def _looks_like_local_path(target: str) -> bool:
+    """以 / 或盘符开头的写法多半是本地路径；// 开头除外（协议相对 URL）。"""
+    raw = (target or "").strip()
+    if raw.startswith("//"):
+        return False
+    if raw.startswith("/") or raw.startswith("~/"):
+        return True
+    return bool(re.match(r"^[A-Za-z]:[\\/]", raw))
 
 
 class GenericAdapter(SiteAdapter):
@@ -29,8 +52,8 @@ class GenericAdapter(SiteAdapter):
                 message="请提供本地文件、视频地址或 HLS 地址",
             )
 
-        if Path(target).exists():
-            path = Path(target).resolve()
+        path = _local_media_path(target)
+        if path is not None:
             source_type = local_source_type(path)
             created = file_created_at(path)
             if source_type == "local_file":
@@ -45,15 +68,28 @@ class GenericAdapter(SiteAdapter):
                 message="将提取文档正文" if source_type == "local_document" else "",
             )
 
+        if _looks_like_local_path(target):
+            return ResolvedMedia(
+                adapter=self.name,
+                source_type="unknown",
+                needs_media_url=True,
+                message=_LOCAL_FILE_MISSING_HINT,
+            )
+
         parsed = urlparse(target)
         if parsed.scheme == "file":
             path = Path(unquote(parsed.path)).resolve()
+            if not path.exists():
+                return ResolvedMedia(
+                    adapter=self.name,
+                    source_type="unknown",
+                    needs_media_url=True,
+                    message=_LOCAL_FILE_MISSING_HINT,
+                )
             source_type = local_source_type(path) if path.suffix else "local_file"
-            created = None
-            if path.exists():
-                created = file_created_at(path)
-                if source_type == "local_file":
-                    created = probe_creation_time(str(path)) or created
+            created = file_created_at(path)
+            if source_type == "local_file":
+                created = probe_creation_time(str(path)) or created
             return ResolvedMedia(
                 adapter=self.name,
                 source_type=source_type,

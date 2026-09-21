@@ -128,6 +128,36 @@ export type JobBatchResult = {
   failed: Array<{ id: string; reason: string }>;
 };
 
+export type LocalEntry = {
+  name: string;
+  path: string;
+  kind: string;
+  size: number;
+  modified_at: string | null;
+  supported: boolean;
+};
+
+export type LocalEntries = {
+  root: string;
+  path: string;
+  parent: string;
+  recursive: boolean;
+  query: string;
+  page: number;
+  page_size: number;
+  total: number;
+  entries: LocalEntry[];
+  truncated: boolean;
+};
+
+export type LocalRoot = {
+  enabled: boolean;
+  root: string;
+  scan_limit: number;
+};
+
+export type LocalPick = { path: string; name: string };
+
 export type CatalogPreviewItem = {
   source_url: string;
   title: string;
@@ -429,6 +459,27 @@ export const api = {
       body.append("source_created_at", String(file.lastModified));
     return request<Job>("/api/jobs/upload", { method: "POST", body });
   },
+  localRoot: () => request<LocalRoot>("/api/jobs/local-root"),
+  localEntries: (
+    path = "",
+    options: {
+      recursive?: boolean;
+      query?: string;
+      page?: number;
+      pageSize?: number;
+    } = {}
+  ) => {
+    const params = new URLSearchParams();
+    if (path) params.set("path", path);
+    if (options.query) params.set("query", options.query);
+    if (options.recursive) params.set("recursive", "true");
+    if (options.page) params.set("page", String(options.page));
+    if (options.pageSize) params.set("page_size", String(options.pageSize));
+    const query = params.toString();
+    return request<LocalEntries>(
+      `/api/jobs/local-entries${query ? `?${query}` : ""}`
+    );
+  },
   retryJob: (id: string, payload?: { media_url_override?: string }) =>
     request<Job>(`/api/jobs/${id}/retry`, {
       method: "POST",
@@ -500,7 +551,7 @@ export const api = {
       `/api/knowledge/conversations?${params}`
     );
   },
-    knowledgeConversation: (id: string) =>
+  knowledgeConversation: (id: string) =>
     request<KnowledgeConversation>(`/api/knowledge/conversations/${id}`),
   renameKnowledgeConversation: (id: string, title: string) =>
     request<KnowledgeConversation>(`/api/knowledge/conversations/${id}`, {

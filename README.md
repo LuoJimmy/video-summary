@@ -42,11 +42,32 @@ npm run dev
 
 浏览器打开 Vite 提示的地址（默认 `http://127.0.0.1:5173`）。
 
+### 开发时开启「从挂载目录选择」
+
+该选项只看后端有没有配媒体目录，`frontend/vite.config.ts` 已把 `/api` 代理到 `127.0.0.1:8765`，前端不用改。给后端进程配一个**已存在**的目录即可：
+
+```bash
+# 方式一：写进 backend/.env（在 backend 目录启动时生效；.env 已在 .gitignore 里）
+MEDIA_DIR=/Users/you/Movies/视频
+
+# 方式二：启动时带环境变量
+MEDIA_DIR=/Users/you/Movies/视频 uvicorn app.main:app --reload --port 8765
+```
+
+改完**重启后端**（`MEDIA_DIR` 只在进程启动时读取），再验证：
+
+```bash
+curl -s http://127.0.0.1:8765/api/jobs/local-root
+# {"enabled":true,"root":"/Users/you/Movies/视频","scan_limit":1000}
+```
+
+前端刷新页面，「本地任务」里就会出现「从挂载目录选择」。没配 `MEDIA_DIR` 或该目录不存在时，`enabled` 为 `false`，该选项不显示；目前这项只能在环境变量 / `.env` 里配置，设置页不提供。
+
 ## 使用顺序
 
 1. 转写默认本机 SenseVoice Small Q8，也可改选 Whisper。进程启动后会后台预拉 SenseVoice。总结在「设置」填写 OpenAI 兼容接口。可按需打开自动 AI 校对。
 2. 在「站点与登录」把浏览器 Cookie 粘进对应登录档案。
-3. 在「任务」粘贴页面/媒体/文档地址，或上传本地视频、音频、PDF、Word、Markdown。文档默认不走总结；需要时勾选「文档生成 AI 总结」。
+3. 在「任务」粘贴页面/媒体/文档地址，或在「本地任务」浏览挂载目录里的文件（可多选、可整目录加入），也可直接上传本地视频、音频、PDF、Word、Markdown。文档默认不走总结；需要时勾选「文档生成 AI 总结」。
 4. 若站点页解析不出流地址，把 Network 里的 m3u8/mp4 填进「媒体地址覆盖」。普通网页（非 B 站/小鹅通/约牛）会提取正文入库。
 5. 在任务详情点击总结时间轴，定位原片或文档段落。
 6. 在「设置 → 定时拉取」打开每天扫描：填写起始日期。小鹅通填店铺 app_id、B 站填 UP mid，多个用逗号或换行分隔；也可在「站点」页再添加一条同类型站点，分别命名。约牛用已有 Cookie 即可。已拉取过的地址会跳过。
@@ -95,7 +116,42 @@ docker run --rm -p 8765:8765 \
 
 也可使用 `ghcr.io/luojimmy/video-summary:latest`。私有仓库拉取前先 `docker login ghcr.io`。
 
-环境变量：`DATA_DIR`（数据库、Whisper 模型、Hugging Face 缓存、文档插件），`DOWNLOAD_DIR`（任务音频和上传文件），`VIDEO_SUMMARY_DATA` / `VIDEO_SUMMARY_DOWNLOADS`（compose 宿主机路径），`PORT`，`PREFETCH_SENSEVOICE`（默认开启；设为 `0` 可关闭启动时后台预拉 SenseVoice）。
+环境变量：`DATA_DIR`（数据库、Whisper 模型、Hugging Face 缓存、文档插件），`DOWNLOAD_DIR`（任务音频和上传文件），`MEDIA_DIR`（「本地任务」可浏览的挂载目录，默认 `/media`），`VIDEO_SUMMARY_DATA` / `VIDEO_SUMMARY_DOWNLOADS` / `VIDEO_SUMMARY_MEDIA`（compose 宿主机路径），`PORT`，`PREFETCH_SENSEVOICE`（默认开启；设为 `0` 可关闭启动时后台预拉 SenseVoice）。
+
+### 处理宿主机上的视频
+
+容器看不到宿主机文件系统。把宿主机目录挂进容器后，「任务 → 本地任务」就会多出一个「从挂载目录选择」选项：
+
+```bash
+VIDEO_SUMMARY_MEDIA=/volume1/video docker compose up --build
+```
+
+打开 `http://127.0.0.1:8765`，进入「本地任务」，切到「从挂载目录选择」，点「选择文件 / 文件夹」打开选择弹框：
+
+- 弹框里可进出文件夹、按名称搜索当前目录、翻页（20/50/100/200 条一页）
+- 勾选文件，或勾选文件夹把其中的视频/音频/文档一次选上（递归，最多 1000 个）
+- 确定后回到创建区，点「创建 N 个任务」批量建任务；一次最多 1000 个，超出会提示
+- 原来的浏览器上传仍保留（默认选项「本地上传」），适合文件不在挂载目录的情况
+
+没配置 `MEDIA_DIR` / 没挂载目录时，「从挂载目录选择」不会出现，界面只有「本地上传」。两个选项是原生单选：默认选中本地上传，切换到挂载目录后弹框选择文件。容器是只读挂载，不会改动原始文件。
+
+`docker run` 等价写法：
+
+```bash
+docker run --rm -p 8765:8765 \
+  -e DATA_DIR=/data \
+  -e DOWNLOAD_DIR=/downloads \
+  -e MEDIA_DIR=/media \
+  -v "$PWD/data:/data" \
+  -v "$PWD/downloads:/downloads" \
+  -v /volume1/video:/media:ro \
+  video-summary:latest
+```
+
+说明：
+
+- `VIDEO_SUMMARY_MEDIA` 不设置时默认把 compose 目录下的 `./media` 只读挂到 `/media`，把要处理的文件放进该目录即可。
+- `MEDIA_DIR` 是「本地任务」的浏览根目录，界面读不到该目录之外的文件；本机直接运行（不设 `MEDIA_DIR`）时不开挂载目录入口。
 
 ### 离线镜像包（极空间等）
 
