@@ -15,14 +15,65 @@
 ![任务详情](http://my-images-space.oss-cn-shenzhen.aliyuncs.com/video-summay/task_detail.png)
 ![知识库](http://my-images-space.oss-cn-shenzhen.aliyuncs.com/video-summay/knowledge.png)
 
-## 环境
+## 安装
+
+- `DATA_DIR`：程序数据路径
+- `DOWNLOAD_DIR`：音影视/文档存放的路径
+- `MEDIA_DIR`：宿主挂载的路径
+  
+方式一：shell安装
+
+```bash
+docker pull ghcr.io/luojimmy/video-summary:latest
+docker run --rm -p 8765:8765 \
+  -e DATA_DIR=/data \
+  -e DOWNLOAD_DIR=/downloads \
+  -e MEDIA_DIR=/media \
+  -v "$PWD/data:/data" \
+  -v "$PWD/downloads:/downloads" \
+  -v /volume1/video:/media:ro \
+  video-summary:latest
+```
+
+方式二：compose安装
+
+```yaml
+services:
+  video-summary:
+    image: ghcr.io/luojimmy/video-summary:latest
+    ports:
+      - "${PORT:-8765}:8765"
+    environment:
+      DATA_DIR: /data
+      DOWNLOAD_DIR: /downloads
+      MEDIA_DIR: /media
+    volumes:
+      - ${VIDEO_SUMMARY_DATA:-./data}:/data
+      - ${VIDEO_SUMMARY_DOWNLOADS:-./downloads}:/downloads
+      - ${VIDEO_SUMMARY_MEDIA:-./media}:/media:ro
+    restart: always
+```
+
+## 使用顺序
+
+1. 转写默认本机 SenseVoice Small Q8，也可改选 Whisper。进程启动后会后台预拉 SenseVoice。总结在「设置」填写 OpenAI 兼容接口。可按需打开自动 AI 校对。
+2. 在「站点与登录」把浏览器 Cookie 粘进对应登录档案。
+3. 在「任务」粘贴页面/媒体/文档地址，或在「本地任务」浏览挂载目录里的文件（可多选、可整目录加入），也可直接上传本地视频、音频、PDF、Word、Markdown。文档默认不走总结；需要时勾选「文档生成 AI 总结」。
+4. 若站点页解析不出流地址，把 Network 里的 m3u8/mp4 填进「媒体地址覆盖」。普通网页（非 B 站/小鹅通/约牛）会提取正文入库。
+5. 在任务详情点击总结时间轴，定位原片或文档段落。
+6. 在「设置 → 定时拉取」打开每天扫描：填写起始日期。小鹅通填店铺 app_id、B 站填 UP mid，多个用逗号或换行分隔；也可在「站点」页再添加一条同类型站点，分别命名。约牛用已有 Cookie 即可。已拉取过的地址会跳过。
+7. 在「知识库」用已配置的总结模型，基于本机转写和导入文档对话生成答案。扫描件 OCR、旧版 Word 可在「设置 → 文档插件」按需安装。
+
+## 开发
+
+### 环境
 
 - Python 3.11+（推荐 3.12）
 - Node.js 18+
 - FFmpeg（抽音，未安装时任务会在抽音阶段失败并给出提示）
 - 扫描 PDF、旧版 `.doc` 为可选插件，装到 `DATA_DIR/plugins`（首次用到会联网下载；也可在设置页预装）。本机处理 `.doc` 也可自行安装 LibreOffice
 
-## 启动
+### 启动
 
 ```bash
 cd backend
@@ -42,9 +93,7 @@ npm run dev
 
 浏览器打开 Vite 提示的地址（默认 `http://127.0.0.1:5173`）。
 
-### 开发时开启「从挂载目录选择」
-
-该选项只看后端有没有配媒体目录，`frontend/vite.config.ts` 已把 `/api` 代理到 `127.0.0.1:8765`，前端不用改。给后端进程配一个**已存在**的目录即可：
+#### 开发时开启「从挂载目录选择」
 
 ```bash
 # 方式一：写进 backend/.env（在 backend 目录启动时生效；.env 已在 .gitignore 里）
@@ -63,17 +112,7 @@ curl -s http://127.0.0.1:8765/api/jobs/local-root
 
 前端刷新页面，「本地任务」里就会出现「从挂载目录选择」。没配 `MEDIA_DIR` 或该目录不存在时，`enabled` 为 `false`，该选项不显示；目前这项只能在环境变量 / `.env` 里配置，设置页不提供。
 
-## 使用顺序
-
-1. 转写默认本机 SenseVoice Small Q8，也可改选 Whisper。进程启动后会后台预拉 SenseVoice。总结在「设置」填写 OpenAI 兼容接口。可按需打开自动 AI 校对。
-2. 在「站点与登录」把浏览器 Cookie 粘进对应登录档案。
-3. 在「任务」粘贴页面/媒体/文档地址，或在「本地任务」浏览挂载目录里的文件（可多选、可整目录加入），也可直接上传本地视频、音频、PDF、Word、Markdown。文档默认不走总结；需要时勾选「文档生成 AI 总结」。
-4. 若站点页解析不出流地址，把 Network 里的 m3u8/mp4 填进「媒体地址覆盖」。普通网页（非 B 站/小鹅通/约牛）会提取正文入库。
-5. 在任务详情点击总结时间轴，定位原片或文档段落。
-6. 在「设置 → 定时拉取」打开每天扫描：填写起始日期。小鹅通填店铺 app_id、B 站填 UP mid，多个用逗号或换行分隔；也可在「站点」页再添加一条同类型站点，分别命名。约牛用已有 Cookie 即可。已拉取过的地址会跳过。
-7. 在「知识库」用已配置的总结模型，基于本机转写和导入文档对话生成答案。扫描件 OCR、旧版 Word 可在「设置 → 文档插件」按需安装。
-
-## Docker
+### Docker
 
 数据目录和下载目录都可改宿主机路径，容器内分别挂到 `/data` 与 `/downloads`。默认镜像只含 FFmpeg，不含 OCR / LibreOffice；扫描件和旧版 `.doc` 插件会装进 `DATA_DIR/plugins`，容器重建后仍在。
 
@@ -99,6 +138,21 @@ docker run --rm -p 8765:8765 \
   -v "$PWD/downloads:/downloads" \
   video-summary:latest
 ```
+
+## 测试
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest -q
+```
+
+```bash
+cd frontend
+npm test
+```
+
+## 部署
 
 ### GitHub Packages
 
@@ -180,19 +234,6 @@ NODE_IMAGE=node:22-alpine PYTHON_IMAGE=python:3.12-slim ./script/build-docker.sh
 ```
 
 可选环境变量：`IMAGE_NAME`（默认 `video-summary:latest`）、`DIST_DIR`、`BUILDER`（本机有 `mybuilder` 时会自动用）。构建还要访问 npm、Debian apt、PyPI；Docker 若配置了失效代理，需先修好网络。一次打两个架构大约十几分钟，并占用数 GB 磁盘。
-
-## 测试
-
-```bash
-cd backend
-source .venv/bin/activate
-pytest -q
-```
-
-```bash
-cd frontend
-npm test
-```
 
 ## 更新日志
 
