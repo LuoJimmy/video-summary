@@ -139,40 +139,7 @@ docker run --rm -p 8765:8765 \
   video-summary:latest
 ```
 
-## 测试
-
-```bash
-cd backend
-source .venv/bin/activate
-pytest -q
-```
-
-```bash
-cd frontend
-npm test
-```
-
-## 部署
-
-### GitHub Packages
-
-正式镜像发布在 GitHub Container Registry，标签与仓库 tag 对齐：
-
-```bash
-docker pull ghcr.io/luojimmy/video-summary:1.2.0
-docker run --rm -p 8765:8765 \
-  -e DATA_DIR=/data \
-  -e DOWNLOAD_DIR=/downloads \
-  -v "$PWD/data:/data" \
-  -v "$PWD/downloads:/downloads" \
-  ghcr.io/luojimmy/video-summary:1.2.0
-```
-
-也可使用 `ghcr.io/luojimmy/video-summary:latest`。私有仓库拉取前先 `docker login ghcr.io`。
-
-环境变量：`DATA_DIR`（数据库、Whisper 模型、Hugging Face 缓存、文档插件），`DOWNLOAD_DIR`（任务音频和上传文件），`MEDIA_DIR`（「本地任务」可浏览的挂载目录，默认 `/media`），`VIDEO_SUMMARY_DATA` / `VIDEO_SUMMARY_DOWNLOADS` / `VIDEO_SUMMARY_MEDIA`（compose 宿主机路径），`PORT`，`PREFETCH_SENSEVOICE`（默认开启；设为 `0` 可关闭启动时后台预拉 SenseVoice）。
-
-### 处理宿主机上的视频
+#### 处理宿主机上的视频
 
 容器看不到宿主机文件系统。把宿主机目录挂进容器后，「任务 → 本地任务」就会多出一个「从挂载目录选择」选项：
 
@@ -206,6 +173,39 @@ docker run --rm -p 8765:8765 \
 
 - `VIDEO_SUMMARY_MEDIA` 不设置时默认把 compose 目录下的 `./media` 只读挂到 `/media`，把要处理的文件放进该目录即可。
 - `MEDIA_DIR` 是「本地任务」的浏览根目录，界面读不到该目录之外的文件；本机直接运行（不设 `MEDIA_DIR`）时不开挂载目录入口。
+
+## 测试
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest -q
+```
+
+```bash
+cd frontend
+npm test
+```
+
+## 部署
+
+### GitHub Packages
+
+正式镜像发布在 GitHub Container Registry，标签与仓库 tag 对齐：
+
+```bash
+docker pull ghcr.io/luojimmy/video-summary:1.2.0
+docker run --rm -p 8765:8765 \
+  -e DATA_DIR=/data \
+  -e DOWNLOAD_DIR=/downloads \
+  -v "$PWD/data:/data" \
+  -v "$PWD/downloads:/downloads" \
+  ghcr.io/luojimmy/video-summary:1.2.0
+```
+
+也可使用 `ghcr.io/luojimmy/video-summary:latest`。私有仓库拉取前先 `docker login ghcr.io`。
+
+环境变量：`DATA_DIR`（数据库、Whisper 模型、Hugging Face 缓存、文档插件），`DOWNLOAD_DIR`（任务音频和上传文件），`MEDIA_DIR`（「本地任务」可浏览的挂载目录，默认 `/media`），`VIDEO_SUMMARY_DATA` / `VIDEO_SUMMARY_DOWNLOADS` / `VIDEO_SUMMARY_MEDIA`（compose 宿主机路径），`PORT`，`PREFETCH_SENSEVOICE`（默认开启；设为 `0` 可关闭启动时后台预拉 SenseVoice）。
 
 ### 离线镜像包（极空间等）
 
