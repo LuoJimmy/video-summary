@@ -20,5 +20,8 @@
   },
   "stylelint.validate": ["css", "vue"],
   "stylelint.workingDirectories": ["frontend"],
-  "css.validate": false
+"css.validate": false,
+"[markdown]": {
+    "editor.defaultFormatter": "DavidAnson.vscode-markdownlint"
+}
 }
