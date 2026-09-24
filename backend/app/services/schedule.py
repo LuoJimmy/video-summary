@@ -73,6 +73,14 @@ def format_hhmm(hour: int, minute: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
+def shanghai_local(now: datetime | None = None) -> datetime:
+    """定时任务一律按北京时间判断，进程时区是 UTC（容器默认）时也不会把 18:01 当成 UTC 18:01。"""
+    stamp = now if now is not None else datetime.now(SHANGHAI)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=SHANGHAI)
+    return stamp.astimezone(SHANGHAI)
+
+
 def parse_since_date(value: str) -> datetime | None:
     text = (value or "").strip()
     if not text:
@@ -403,7 +411,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                 raise ValueError("定时任务未启用")
             if trigger != "manual" and not missed_scheduled_run(db):
                 hour, minute = parse_hhmm(cfg.time)
-                local = datetime.now().astimezone()
+                local = shanghai_local()
                 scheduled_today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 if local < scheduled_today:
                     raise ValueError("未到今天的定时时间")
@@ -568,7 +576,7 @@ def seconds_until_tick(enabled: bool, time_text: str, now: datetime | None = Non
     if not enabled:
         return DISABLED_WAIT
     hour, minute = parse_hhmm(time_text or DEFAULT_TIME)
-    local = (now or datetime.now().astimezone()).astimezone()
+    local = shanghai_local(now)
     target = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target <= local:
         target += timedelta(days=1)
@@ -580,7 +588,7 @@ def missed_scheduled_run(db: Session, now: datetime | None = None) -> bool:
     if not cfg.enabled:
         return False
     hour, minute = parse_hhmm(cfg.time)
-    local = (now or datetime.now().astimezone()).astimezone()
+    local = shanghai_local(now)
     scheduled_today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if local < scheduled_today:
         return False

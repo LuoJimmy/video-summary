@@ -5,6 +5,7 @@ services:
     ports:
       - "${PORT:-8765}:8765"
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       DATA_DIR: /data
       DOWNLOAD_DIR: /downloads
       MEDIA_DIR: /media

@@ -16,7 +16,7 @@ LABEL org.opencontainers.image.title="Video Summary" \
       org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
       org.opencontainers.image.version="1.2.0"
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg libgomp1 ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg libgomp1 ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -28,7 +28,8 @@ COPY --from=frontend /ui/dist ./static
 # 「本地任务」的默认浏览根，未挂载任何目录时也能正常打开空目录
 RUN mkdir -p /media
 
-ENV DATA_DIR=/data \
+ENV TZ=Asia/Shanghai \
+    DATA_DIR=/data \
     DOWNLOAD_DIR=/downloads \
     MEDIA_DIR=/media \
     STATIC_DIR=/app/static \

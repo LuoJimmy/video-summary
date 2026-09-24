@@ -570,6 +570,29 @@ def test_seconds_until_tick_and_missed_run(db_session):
     assert missed_scheduled_run(db_session, morning) is False
 
 
+def test_schedule_time_is_shanghai_even_in_utc_process(db_session):
+    """容器 / 进程时区是 UTC 时，18:01 仍要按北京时间解释，不能被当成 UTC 18:01。"""
+    from app.models import Site
+    from app.services.schedule import save_schedule
+
+    xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
+    save_schedule(
+        db_session,
+        ScheduleIn(
+            enabled=True,
+            time="18:01",
+            since="",
+            max_jobs=5,
+            sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+        ),
+    )
+    before = datetime(2026, 9, 23, 9, 0, tzinfo=timezone.utc)  # 北京 17:00
+    assert 3659 < seconds_until_tick(True, "18:01", before) < 3662
+    assert missed_scheduled_run(db_session, before) is False
+    at_time = datetime(2026, 9, 23, 10, 1, tzinfo=timezone.utc)  # 北京 18:01
+    assert missed_scheduled_run(db_session, at_time) is True
+
+
 def test_cron_does_not_run_when_schedule_disabled(client, db_session, monkeypatch):
     from app.models import ScheduleLog
     from app.services.schedule import run_once

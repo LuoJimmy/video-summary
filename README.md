@@ -20,12 +20,14 @@
 - `DATA_DIR`：程序数据路径
 - `DOWNLOAD_DIR`：音影视/文档存放的路径
 - `MEDIA_DIR`：宿主挂载的路径
+- `TZ`：容器时区，默认 `Asia/Shanghai`；定时任务一律按北京时间判断，不随容器时区变化
   
 方式一：shell安装
 
 ```bash
 docker pull ghcr.io/luojimmy/video-summary:latest
 docker run --rm -p 8765:8765 \
+  -e TZ=Asia/Shanghai \
   -e DATA_DIR=/data \
   -e DOWNLOAD_DIR=/downloads \
   -e MEDIA_DIR=/media \
@@ -44,6 +46,7 @@ services:
     ports:
       - "${PORT:-8765}:8765"
     environment:
+      TZ: Asia/Shanghai
       DATA_DIR: /data
       DOWNLOAD_DIR: /downloads
       MEDIA_DIR: /media
@@ -132,6 +135,7 @@ docker compose up --build
 ```bash
 docker build -t video-summary:latest .
 docker run --rm -p 8765:8765 \
+  -e TZ=Asia/Shanghai \
   -e DATA_DIR=/data \
   -e DOWNLOAD_DIR=/downloads \
   -v "$PWD/data:/data" \
@@ -160,6 +164,7 @@ VIDEO_SUMMARY_MEDIA=/volume1/video docker compose up --build
 
 ```bash
 docker run --rm -p 8765:8765 \
+  -e TZ=Asia/Shanghai \
   -e DATA_DIR=/data \
   -e DOWNLOAD_DIR=/downloads \
   -e MEDIA_DIR=/media \
