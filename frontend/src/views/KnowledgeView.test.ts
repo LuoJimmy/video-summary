@@ -186,7 +186,7 @@ describe("知识库任务列表分页", () => {
     ).toBe(true);
   });
 
-  it("文档引用显示 locator 并链到段落", async () => {
+  it("文档引用默认收起，点击后才展开并链到段落", async () => {
     const el = await mountKnowledge();
     vi.mocked(api.knowledgeChat).mockResolvedValue({
       answer: "利率下行对估值有支撑",
@@ -213,12 +213,31 @@ describe("知识库任务列表分页", () => {
     await flush();
     clickNamed(el, "发送");
     await flush();
+    const toggle = el.querySelector(".cite-toggle") as HTMLButtonElement;
+    expect(toggle.textContent?.trim()).toBe("依据（1）");
+    expect(toggle.getAttribute("aria-expanded")).not.toBe("true");
+    expect((el.querySelector(".cite-list") as HTMLElement).style.display).toBe(
+      "none"
+    );
+
+    toggle.click();
+    await flush();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      (el.querySelector(".cite-list") as HTMLElement).style.display
+    ).not.toBe("none");
     expect(el.textContent).toContain("第3页");
     expect(el.textContent).not.toContain("00:00");
     const link = el.querySelector(".cite-link") as HTMLAnchorElement | null;
     expect(link?.getAttribute("href")).toContain("/jobs/job-1");
     expect(link?.getAttribute("href")).toContain("seg=0");
     expect(link?.getAttribute("href")).toContain("from=knowledge");
+
+    toggle.click();
+    await flush();
+    expect((el.querySelector(".cite-list") as HTMLElement).style.display).toBe(
+      "none"
+    );
   });
 
   it("任务标题链到对应详情并带回知识库来源", async () => {
@@ -398,5 +417,45 @@ describe("知识库问答历史", () => {
       "茅台复盘"
     );
     expect(el.textContent).toContain("茅台复盘");
+  });
+
+  it("历史对话恢复后依据仍默认收起", async () => {
+    const conv = makeConversation();
+    const el = await mountKnowledge([makeDoc()], 1, [conv]);
+    vi.mocked(api.knowledgeConversation).mockResolvedValue({
+      ...conv,
+      messages: [
+        { role: "user", content: "茅台怎么看" },
+        {
+          role: "assistant",
+          content: "量能放大可以低吸",
+          citations: [
+            {
+              job_id: "job-1",
+              title: "行情课",
+              kind: "transcript",
+              kind_label: "转写",
+              text: "量能放大可以低吸",
+              snippet: "量能放大可以低吸",
+              start: 12,
+              end: 20,
+              segment_id: 3,
+            },
+          ],
+        },
+      ],
+    });
+    (el.querySelector(".kb-history-open") as HTMLButtonElement).click();
+    await flush();
+    const toggle = el.querySelector(".cite-toggle") as HTMLButtonElement;
+    expect(toggle.textContent?.trim()).toBe("依据（1）");
+    expect((el.querySelector(".cite-list") as HTMLElement).style.display).toBe(
+      "none"
+    );
+    toggle.click();
+    await flush();
+    expect(el.querySelector(".cite-link")?.getAttribute("href")).toContain(
+      "t=12"
+    );
   });
 });

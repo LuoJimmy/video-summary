@@ -7,7 +7,14 @@ import {
   ref,
   watch,
 } from "vue";
-import { EllipsisVertical, PanelLeft, Pencil, Plus, Trash2 } from "@lucide/vue";
+import {
+  ChevronRight,
+  EllipsisVertical,
+  PanelLeft,
+  Pencil,
+  Plus,
+  Trash2,
+} from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +54,7 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   citations?: KnowledgeHit[];
+  citationsOpen?: boolean;
 };
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -188,6 +196,11 @@ function startNewChat() {
 
 function toggleHistory() {
   historyOpen.value = !historyOpen.value;
+}
+
+function toggleCitations(index: number) {
+  const item = messages.value[index];
+  if (item) item.citationsOpen = !item.citationsOpen;
 }
 
 async function setDomain(value: string | null) {
@@ -543,19 +556,36 @@ function loadMoreHistory() {
             />
             <div v-else class="chat-body">{{ item.content }}</div>
             <div v-if="item.citations?.length" class="chat-cites">
-              <div class="msg mb-1.5">依据</div>
-              <router-link
-                v-for="(hit, cIndex) in item.citations"
-                :key="cIndex"
-                class="cite-link"
-                :to="jobLink(hit)"
+              <Button
+                variant="ghost"
+                type="button"
+                class="cite-toggle h-auto justify-self-start px-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                :aria-expanded="Boolean(item.citationsOpen)"
+                :aria-label="item.citationsOpen ? '收起依据' : '展开依据'"
+                :title="item.citationsOpen ? '收起依据' : '展开依据'"
+                @click="toggleCitations(index)"
               >
-                <Badge variant="secondary">{{ hit.kind_label }}</Badge>
-                <span v-if="citePlace(hit)" class="cite-time">{{
-                  citePlace(hit)
-                }}</span>
-                {{ hit.title }} · {{ hit.snippet }}
-              </router-link>
+                <ChevronRight
+                  class="size-4 transition-transform"
+                  :class="{ 'rotate-90': item.citationsOpen }"
+                  aria-hidden="true"
+                />
+                依据（{{ item.citations.length }}）
+              </Button>
+              <div v-show="item.citationsOpen" class="cite-list">
+                <router-link
+                  v-for="(hit, cIndex) in item.citations"
+                  :key="cIndex"
+                  class="cite-link"
+                  :to="jobLink(hit)"
+                >
+                  <Badge variant="secondary">{{ hit.kind_label }}</Badge>
+                  <span v-if="citePlace(hit)" class="cite-time">{{
+                    citePlace(hit)
+                  }}</span>
+                  {{ hit.title }} · {{ hit.snippet }}
+                </router-link>
+              </div>
             </div>
           </div>
         </div>
