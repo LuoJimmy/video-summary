@@ -593,6 +593,91 @@ def test_schedule_time_is_shanghai_even_in_utc_process(db_session):
     assert missed_scheduled_run(db_session, at_time) is True
 
 
+def test_missed_scheduled_run_ignores_skip_log(db_session):
+    """「已跳过」记录不算执行过，不能挡住当天补跑。"""
+    from app.models import Site
+    from app.services.schedule import save_schedule
+
+    xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
+    save_schedule(
+        db_session,
+        ScheduleIn(
+            enabled=True,
+            time="18:01",
+            since="",
+            max_jobs=5,
+            sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+        ),
+    )
+    at_time = datetime(2026, 9, 23, 10, 1, tzinfo=timezone.utc)  # 北京 18:01
+    db_session.add(
+        ScheduleLog(
+            trigger="cron",
+            status="skipped",
+            summary="今天已经执行过定时任务，本轮到点不再扫描",
+            finished_at=datetime(2026, 9, 23, 10, 1),
+        )
+    )
+    db_session.commit()
+    assert missed_scheduled_run(db_session, at_time) is True
+
+
+def test_run_due_tick_notes_skip_and_runs_when_due(db_session, monkeypatch):
+    """到点评估：没到点不留痕；到点没跑过就扫描；当天跑过则留一条「已跳过」。"""
+    from app.models import Site
+    from app.services import schedule as schedule_service
+
+    TestingSession = sessionmaker(bind=db_session.get_bind(), autoflush=False, autocommit=False)
+    monkeypatch.setattr(schedule_service, "SessionLocal", TestingSession)
+    monkeypatch.setattr(schedule_service, "_skip_log_day", "")
+    ran: list[str] = []
+    monkeypatch.setattr(schedule_service, "_safe_run_once", lambda trigger: ran.append(trigger))
+
+    xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
+    schedule_service.save_schedule(
+        db_session,
+        ScheduleIn(
+            enabled=True,
+            time="18:01",
+            since="",
+            max_jobs=5,
+            sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+        ),
+    )
+    before = datetime(2026, 9, 23, 9, 0, tzinfo=timezone.utc)  # 北京 17:00
+    at_time = datetime(2026, 9, 23, 10, 1, tzinfo=timezone.utc)  # 北京 18:01
+
+    db_session.rollback()
+    assert schedule_service._run_due_tick("cron", before) is False
+    db_session.rollback()
+    assert ran == []
+    assert db_session.query(ScheduleLog).count() == 0
+
+    assert schedule_service._run_due_tick("cron", at_time) is True
+    db_session.rollback()
+    assert ran == ["cron"]
+    assert db_session.query(ScheduleLog).count() == 0
+
+    monkeypatch.setattr(schedule_service, "_skip_log_day", "")
+    db_session.add(
+        ScheduleLog(
+            trigger="cron",
+            status="ok",
+            summary="当天已经跑过",
+            finished_at=datetime(2026, 9, 23, 10, 0),
+        )
+    )
+    db_session.commit()
+    assert schedule_service._run_due_tick("cron", at_time) is False
+    db_session.rollback()
+    assert ran == ["cron"]
+    skipped = db_session.query(ScheduleLog).filter(ScheduleLog.status == "skipped").all()
+    assert len(skipped) == 1
+    assert skipped[0].trigger == "cron"
+    assert "已经执行过" in skipped[0].summary
+    assert skipped[0].finished_at is not None
+
+
 def test_cron_does_not_run_when_schedule_disabled(client, db_session, monkeypatch):
     from app.models import ScheduleLog
     from app.services.schedule import run_once

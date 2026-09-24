@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   api,
@@ -478,15 +485,17 @@ async function runScheduleNow() {
   await nextTick();
   try {
     let log = await api.runSchedule();
-    let logIsNew = Boolean(log?.id) && log.id !== PENDING_RUN_ID && !knownIds.has(log.id);
+    let logIsNew =
+      Boolean(log?.id) && log.id !== PENDING_RUN_ID && !knownIds.has(log.id);
     if (logIsNew) upsertScheduleLog(log);
     const started = Date.now();
     while (runWatching && Date.now() - started < 180000) {
       if (logIsNew && log.status !== "running") break;
       const logs = await api.scheduleLogs();
       const incoming =
-        logs.find((item) => item.status === "running" && item.id !== PENDING_RUN_ID) ||
-        logs.find((item) => item.id && !knownIds.has(item.id));
+        logs.find(
+          (item) => item.status === "running" && item.id !== PENDING_RUN_ID
+        ) || logs.find((item) => item.id && !knownIds.has(item.id));
       if (incoming) {
         scheduleLogs.value = logs;
         log = incoming;
@@ -568,6 +577,7 @@ function scheduleStatusLabel(status: string) {
   if (status === "failed") return "失败";
   if (status === "partial") return "部分成功";
   if (status === "running") return "进行中";
+  if (status === "skipped") return "已跳过";
   return "成功";
 }
 
@@ -1249,7 +1259,8 @@ const highlightPhrasesText = computed({
       <div class="section-title">
         <h3>定时任务</h3>
         <InfoTip label="定时任务说明">
-          每天只拉取当天发布的内容，不会用更早的稿件凑满数量。B 站多个 UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
+          每天只拉取当天发布的内容，不会用更早的稿件凑满数量。B 站多个
+          UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
           app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。需要立刻扫一轮时用「立即执行」。
         </InfoTip>
       </div>
@@ -1341,7 +1352,10 @@ const highlightPhrasesText = computed({
             <li
               v-for="item in scheduleLogs"
               :key="item.id"
-              :class="{ 'is-running': item.status === 'running' }"
+              :class="{
+                'is-running': item.status === 'running',
+                'is-skipped': item.status === 'skipped',
+              }"
             >
               <div class="schedule-log-head">
                 <strong>{{ formatDateTime(item.started_at) }}</strong>

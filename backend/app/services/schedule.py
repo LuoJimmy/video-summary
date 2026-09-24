@@ -33,6 +33,8 @@ CATALOG_HINTS = {
 DEFAULT_TIME = "08:00"
 DEFAULT_MAX_JOBS = 5
 MAX_JOBS_LIMIT = 20
+SCHEDULE_DONE_STATUSES = ("ok", "partial", "failed")
+SKIP_STATUS = "skipped"
 BILI_CATALOG_PAUSE = 2.0
 DISABLED_WAIT = 3600.0
 BILI_RATE_LIMIT_KEEP = "后续稿件列表被限流，已保留已拉到的条目。请等几分钟再试，或到站点页填写 Cookie 保持登录态"
@@ -43,6 +45,7 @@ _run_lock = threading.Lock()
 _exec_lock = threading.Lock()
 _thread: threading.Thread | None = None
 _startup_checked = False
+_skip_log_day = ""
 
 
 def _setting(db: Session, key: str, default: str = "") -> str:
@@ -597,6 +600,7 @@ def missed_scheduled_run(db: Session, now: datetime | None = None) -> bool:
     row = (
         db.query(ScheduleLog)
         .filter(ScheduleLog.finished_at.isnot(None))
+        .filter(ScheduleLog.status.in_(SCHEDULE_DONE_STATUSES))
         .filter(ScheduleLog.started_at >= start_utc)
         .first()
     )
@@ -626,11 +630,79 @@ def stop_scheduler() -> None:
         thread.join(timeout=2)
 
 
+def note_schedule_skip(
+    trigger: str,
+    summary: str,
+    now: datetime | None = None,
+    force: bool = False,
+) -> None:
+    """到点但没执行时也写一条记录，避免只看到一片空白；同一天只留一条。"""
+    global _skip_log_day
+    stamp = naive_utc(shanghai_local(now))
+    day = shanghai_local(now).strftime("%Y-%m-%d")
+    if not force and _skip_log_day == day:
+        return
+    _skip_log_day = day
+    db = SessionLocal()
+    try:
+        db.add(
+            ScheduleLog(
+                trigger=trigger,
+                status=SKIP_STATUS,
+                summary=summary,
+                started_at=stamp,
+                finished_at=stamp,
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _safe_run_once(trigger: str) -> None:
     try:
         run_once(trigger)
+    except Exception as exc:
+        note_schedule_skip(trigger, f"本轮没有执行：{exc}", force=trigger == "manual")
+
+
+def _run_due_tick(trigger: str = "cron", now: datetime | None = None) -> bool:
+    """到点评估：该扫描就扫描；已执行过或检查失败也写一条留痕，返回是否已处理。"""
+    global _skip_log_day
+    stamp = shanghai_local(now)
+    note = ""
+    force = False
+    run = False
+    db = SessionLocal()
+    try:
+        cfg = load_schedule(db)
+        if not cfg.enabled:
+            return False
+        hour, minute = parse_hhmm(cfg.time)
+        if stamp < stamp.replace(hour=hour, minute=minute, second=0, microsecond=0):
+            return False
+        try:
+            due = missed_scheduled_run(db, stamp)
+        except Exception as exc:
+            note = f"检查定时状态失败，本轮未扫描：{exc}"
+            force = True
+        else:
+            if due:
+                run = True
+            else:
+                note = "今天已经执行过定时任务，本轮到点不再扫描"
     except Exception:
-        return
+        return False
+    finally:
+        db.close()
+    if note:
+        note_schedule_skip(trigger, note, stamp, force=force)
+    if run:
+        _skip_log_day = ""
+        _safe_run_once(trigger)
+    return run
 
 
 def start_detached_run(trigger: str = "manual") -> ScheduleLogOut:
@@ -706,13 +778,4 @@ def _loop() -> None:
             break
         if triggered:
             _wake.clear()
-            continue
-        db = SessionLocal()
-        try:
-            if not missed_scheduled_run(db):
-                continue
-        except Exception:
-            continue
-        finally:
-            db.close()
-        _safe_run_once("cron")
+        _run_due_tick("cron")

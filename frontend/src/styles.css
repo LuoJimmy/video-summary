@@ -647,6 +647,10 @@ h3 {
   border-left: 3px solid var(--accent);
   padding-left: 0.65rem;
 }
+.schedule-log-list li.is-skipped {
+  border-left: 3px dashed var(--line);
+  padding-left: 0.65rem;
+}
 .schedule-log-head {
   display: flex;
   flex-wrap: wrap;

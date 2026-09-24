@@ -315,6 +315,16 @@ describe("设置页模型限制说明", () => {
         detail: [],
         digest_job_id: "digest-1",
       },
+      {
+        id: "log-2",
+        started_at: "2026-09-10T10:00:00Z",
+        finished_at: "2026-09-10T10:00:00Z",
+        trigger: "cron",
+        status: "skipped",
+        summary: "今天已经执行过定时任务，本轮到点不再扫描",
+        detail: [],
+        digest_job_id: "",
+      },
     ]);
     expect(el.textContent).toContain("定时任务");
     expect(el.textContent).toContain("生成汇总总结");
@@ -328,6 +338,8 @@ describe("设置页模型限制说明", () => {
     expect(el.textContent).toContain("当天发布");
     expect(el.textContent).toContain("多个 UP");
     expect(el.textContent).toContain("小鹅通：新建 1，跳过 2");
+    expect(el.textContent).toContain("已跳过");
+    expect(el.querySelector(".schedule-log-list li.is-skipped")).toBeTruthy();
     const saveBtn = [...el.querySelectorAll("button")].find((item) =>
       item.textContent?.includes("保存定时")
     );
@@ -507,10 +519,11 @@ describe("插件", () => {
       ...samplePlugins[0],
       status: "installing",
     };
-    const el = await mountSettings(localSettings, [], [
-      installing,
-      samplePlugins[1],
-    ]);
+    const el = await mountSettings(
+      localSettings,
+      [],
+      [installing, samplePlugins[1]]
+    );
     clickSettingsTab(el, "插件");
     await flush();
     expect(el.textContent).toContain("安装中");
