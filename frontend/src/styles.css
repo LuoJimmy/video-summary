@@ -446,6 +446,7 @@ h3 {
   color: var(--text);
 }
 .sub {
+    font-size: var(--text-sm);
   color: var(--muted);
   margin-bottom: var(--space-6);
   overflow-wrap: anywhere;
