@@ -2024,6 +2024,25 @@ label.check small {
   .lex-table td:last-child {
     width: 64px;
   }
+  /* 移动端提示气泡改为固定居中的卡片：隐藏时完全不参与文档滚动区域，
+     避免 absolute 定位向右溢出把页面撑宽，导致整页可左右滑动。 */
+  .info-tip-text {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 60;
+    width: max-content;
+    max-width: min(30rem, calc(100% - 2rem));
+    max-height: min(70dvh, 24rem);
+    overflow-y: auto;
+    transform: translate(-50%, -50%);
+  }
+  .info-tip.is-open .info-tip-text,
+  .info-tip:hover .info-tip-text,
+  .info-tip:focus .info-tip-text,
+  .info-tip:focus-visible .info-tip-text {
+    transform: translate(-50%, -50%);
+  }
   .back-to-top {
     right: max(0.875rem, env(safe-area-inset-right));
     bottom: calc(5.5rem + env(safe-area-inset-bottom) + var(--space-3));
