@@ -3,7 +3,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toast } from "vue-sonner";
 import { version as appVersion } from "../../package.json";
-import { api, type AppSettings, type PluginInfo } from "../api";
+import { api, ScheduleLog, type AppSettings, type PluginInfo } from "../api";
 import { emptyDomainPack } from "../utils/domain";
 import SettingsView from "./SettingsView.vue";
 
@@ -121,18 +121,7 @@ async function flush() {
 
 async function mountSettings(
   settings: AppSettings,
-  logs: Array<{
-    id: string;
-    started_at: string;
-    finished_at: string | null;
-    trigger: string;
-    status: string;
-    summary: string;
-    detail: unknown[];
-    digest_job_id?: string;
-    rule_id?: string;
-    rule_name?: string;
-  }> = [],
+  logs: Array<ScheduleLog> = [],
   plugins: PluginInfo[] = samplePlugins,
   path = "/settings",
   rules: Array<typeof sampleRule> = [sampleRule]
@@ -340,6 +329,7 @@ describe("设置页模型限制说明", () => {
         summary: "今天已经执行过定时任务，本轮到点不再扫描",
         detail: [],
         digest_job_id: "",
+        rule_id: "rule-1",
         rule_name: "B站早班",
       },
     ]);
@@ -416,15 +406,7 @@ describe("设置页模型限制说明", () => {
 
   it("立即执行时立刻展示扫描中，完成后写入日志", async () => {
     let finishRun:
-      | ((value: {
-          id: string;
-          started_at: string;
-          finished_at: string | null;
-          trigger: string;
-          status: string;
-          summary: string;
-          detail: unknown[];
-        }) => void)
+      | ((value:ScheduleLog | PromiseLike<ScheduleLog>) => void)
       | undefined;
     vi.mocked(api.runSchedule).mockImplementation(
       () =>
@@ -453,6 +435,8 @@ describe("设置页模型限制说明", () => {
       summary: "B站：跳过 1，请求过于频繁，请稍后再试",
       detail: [],
       digest_job_id: "",
+      rule_id: "rule-1",
+      rule_name: "B站早班",
     });
     await flush();
     expect(el.textContent).toContain("请求过于频繁");
@@ -472,6 +456,8 @@ describe("设置页模型限制说明", () => {
       summary: "小鹅通：新建 1，跳过 2",
       detail: [],
       digest_job_id: "",
+      rule_id: "rule-1",
+      rule_name: "B站早班",
     };
     const newLog = {
       id: "log-new",
@@ -482,6 +468,8 @@ describe("设置页模型限制说明", () => {
       summary: "B站：新建 2",
       detail: [],
       digest_job_id: "",
+      rule_id: "rule-1",
+      rule_name: "B站早班",
     };
     const el = await mountSettings(localSettings, [oldLog]);
     vi.mocked(api.runSchedule).mockResolvedValue(oldLog);

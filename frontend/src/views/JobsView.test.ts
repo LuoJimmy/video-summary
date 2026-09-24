@@ -1,7 +1,7 @@
 import { createApp, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type Job } from "../api";
+import { api, ResolvePreview, type Job } from "../api";
 import JobsView from "./JobsView.vue";
 
 vi.mock("../api", () => ({
@@ -875,7 +875,7 @@ describe("整站目录拉取", () => {
 
   it("空间页拉取等待时按钮显示 loading", async () => {
     const el = await mountJobs();
-    let release!: (value: unknown) => void;
+    let release!: (value: ResolvePreview | PromiseLike<ResolvePreview>) => void;
     vi.mocked(api.preview).mockImplementation(
       () =>
         new Promise((resolve) => {
