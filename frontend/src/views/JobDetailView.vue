@@ -9,7 +9,7 @@ import {
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useWindowScroll } from "@vueuse/core";
-import { ChevronLeft, ChevronUp } from "@lucide/vue";
+import { ChevronLeft, ChevronUp, EllipsisVertical } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { api, apiErrorMessage, type Job } from "../api";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
-import JobTitleEditor from "../components/JobTitleEditor.vue";
+import JobEditDialog from "../components/JobEditDialog.vue";
 import VideoPlayer from "../components/VideoPlayer.vue";
 import DocumentPreview from "../components/DocumentPreview.vue";
 import {
@@ -76,6 +76,9 @@ function jobLink(id: string) {
 const job = ref<Job | null>(null);
 const player = ref<{ seek: (n: number) => void } | null>(null);
 const askingDelete = ref(false);
+const askingEdit = ref(false);
+const editBusy = ref(false);
+const actionsOpen = ref(false);
 const mediaOverride = ref("");
 const playSrc = ref("");
 const playHint = ref("");
@@ -394,13 +397,28 @@ async function retranscribe() {
   job.value = await api.retranscribeJob(job.value.id);
 }
 
-async function rename(nextTitle: string) {
+function toggleActions(event: MouseEvent) {
+  event.stopPropagation();
+  actionsOpen.value = !actionsOpen.value;
+}
+
+function closeActions() {
+  actionsOpen.value = false;
+}
+
+async function saveJobInfo(next: { title: string; author: string }) {
   if (!job.value) return;
+  editBusy.value = true;
   try {
-    job.value = await api.updateJob(job.value.id, { title: nextTitle });
+    job.value = await api.updateJob(job.value.id, {
+      title: next.title,
+      author: next.author,
+    });
+    askingEdit.value = false;
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "修改标题失败");
-    throw err;
+    toast.error(err instanceof Error ? err.message : "保存失败");
+  } finally {
+    editBusy.value = false;
   }
 }
 
@@ -417,6 +435,7 @@ async function confirmDelete() {
 }
 
 onMounted(async () => {
+  document.addEventListener("click", closeActions);
   try {
     const settings = await api.settings();
     showTranscript.value = settings.show_transcript !== false;
@@ -469,6 +488,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  document.removeEventListener("click", closeActions);
   if (timer) window.clearInterval(timer);
   if (clock !== undefined) window.clearInterval(clock);
   if (missingTimer) window.clearTimeout(missingTimer);
@@ -482,8 +502,7 @@ onBeforeUnmount(() => {
         <ChevronLeft />
       </router-link>
     </Button>
-    <JobTitleEditor v-if="job" heading :title="job.title" :save="rename" />
-    <h1 v-else>任务详情</h1>
+    <h1>{{ job?.title || "任务详情" }}</h1>
   </div>
   <div v-if="job">
     <p class="sub">{{ sourceMeta }}</p>
@@ -503,49 +522,69 @@ onBeforeUnmount(() => {
         <Badge variant="secondary">{{
           sourceTypeLabel(job.source_type)
         }}</Badge>
-        <Button
-          v-if="jobBusy"
-          variant="destructive"
-          type="button"
-          @click="cancel"
-          >取消任务</Button
-        >
-        <Button
-          v-if="canRetrySteps && !isDigest"
-          type="button"
-          @click="retranscribe"
-          >{{ isDocument ? "重新提取" : "重新转写" }}</Button
-        >
-        <Button
-          v-if="canReuseTranscript && !isDocument && !isDigest"
-          variant="outline"
-          type="button"
-          @click="proofread"
-          >重新校对转写</Button
-        >
-        <Button
-          v-if="canResummarize"
-          variant="outline"
-          type="button"
-          @click="resummarize"
-          >{{ job.summary ? "重新总结" : "生成总结" }}</Button
-        >
-        <Button
-          v-if="
-            !isDigest && (job.status === 'failed' || job.status === 'cancelled')
-          "
-          variant="outline"
-          type="button"
-          @click="retry"
-          >{{ hasTranscript ? "从头重试" : "重试" }}</Button
-        >
-        <Button
-          variant="outline"
-          class="text-destructive"
-          type="button"
-          @click="askingDelete = true"
-          >删除</Button
-        >
+        <div class="action-menu">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="icon-btn action-menu-trigger"
+            type="button"
+            aria-label="更多操作"
+            title="更多"
+            :aria-expanded="actionsOpen"
+            @click="toggleActions($event)"
+          >
+            <EllipsisVertical />
+          </Button>
+          <div class="action-menu-items" :class="{ 'is-open': actionsOpen }">
+            <Button
+              v-if="jobBusy"
+              variant="destructive"
+              type="button"
+              @click="cancel"
+              >取消任务</Button
+            >
+            <Button
+              v-if="canRetrySteps && !isDigest"
+              type="button"
+              @click="retranscribe"
+              >{{ isDocument ? "重新提取" : "重新转写" }}</Button
+            >
+            <Button
+              v-if="canReuseTranscript && !isDocument && !isDigest"
+              variant="outline"
+              type="button"
+              @click="proofread"
+              >重新校对转写</Button
+            >
+            <Button
+              v-if="canResummarize"
+              variant="outline"
+              type="button"
+              @click="resummarize"
+              >{{ job.summary ? "重新总结" : "生成总结" }}</Button
+            >
+            <Button
+              v-if="
+                !isDigest &&
+                (job.status === 'failed' || job.status === 'cancelled')
+              "
+              variant="outline"
+              type="button"
+              @click="retry"
+              >{{ hasTranscript ? "从头重试" : "重试" }}</Button
+            >
+            <Button variant="outline" type="button" @click="askingEdit = true"
+              >编辑</Button
+            >
+            <Button
+              variant="outline"
+              class="text-destructive"
+              type="button"
+              @click="askingDelete = true"
+              >删除</Button
+            >
+          </div>
+        </div>
       </div>
       <div class="progress-row">
         <Progress :model-value="job.progress" class="h-1.5" />
@@ -700,6 +739,14 @@ onBeforeUnmount(() => {
     </section>
   </div>
 
+  <JobEditDialog
+    :open="askingEdit"
+    :title="job?.title || ''"
+    :author="job?.author || ''"
+    :busy="editBusy"
+    @close="askingEdit = false"
+    @save="saveJobInfo"
+  />
   <JobDeleteDialog
     :open="askingDelete"
     :title="job?.title || ''"

@@ -650,3 +650,72 @@ describe("详情返回入口", () => {
     );
   });
 });
+
+describe("详情编辑入口", () => {
+  it("编辑按钮排在删除前面，弹窗能同时改标题和作者", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({
+        status: "done",
+        stage: "done",
+        progress: 100,
+        title: "旧标题",
+      })
+    );
+    const el = await mountDetail();
+    expect(el.querySelector("h1")?.textContent).toContain("旧标题");
+    const menu = el.querySelector(".card .row .action-menu") as HTMLElement;
+    expect(menu.querySelector(".action-menu-trigger")).toBeTruthy();
+    const buttons = [...menu.querySelectorAll(".action-menu-items button")].map(
+      (btn) => btn.textContent?.trim()
+    );
+    const editIndex = buttons.indexOf("编辑");
+    expect(editIndex).toBeGreaterThanOrEqual(0);
+    expect(buttons[editIndex + 1]).toBe("删除");
+
+    vi.mocked(api.updateJob).mockResolvedValue(
+      makeJob({
+        status: "done",
+        stage: "done",
+        progress: 100,
+        title: "新标题",
+        author: "新作者",
+      })
+    );
+    (
+      [...menu.querySelectorAll(".action-menu-items button")].find(
+        (btn) => btn.textContent?.trim() === "编辑"
+      ) as HTMLButtonElement
+    ).click();
+    await flush();
+
+    const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog).toBeTruthy();
+    const titleInput = dialog.querySelector(
+      "input[aria-label='任务标题']"
+    ) as HTMLInputElement;
+    const authorInput = dialog.querySelector(
+      "input[aria-label='任务作者']"
+    ) as HTMLInputElement;
+    expect(titleInput.value).toBe("旧标题");
+    expect(authorInput.value).toBe("");
+    titleInput.value = "新标题";
+    titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    authorInput.value = "新作者";
+    authorInput.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+
+    (
+      [...dialog.querySelectorAll("button")].find(
+        (btn) => btn.textContent?.trim() === "保存"
+      ) as HTMLButtonElement
+    ).click();
+    await flush();
+
+    expect(api.updateJob).toHaveBeenCalledWith("job-1", {
+      title: "新标题",
+      author: "新作者",
+    });
+    expect(el.querySelector("h1")?.textContent).toContain("新标题");
+    expect(document.querySelector('[role="dialog"]')).toBeFalsy();
+  });
+});

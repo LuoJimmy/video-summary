@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import {
   ArrowDown,
   ArrowUp,
+  EllipsisVertical,
   Folder,
   Info,
   Loader2,
@@ -45,7 +46,7 @@ import {
 } from "../utils/source";
 import CatalogImportDialog from "../components/CatalogImportDialog.vue";
 import JobDeleteDialog from "../components/JobDeleteDialog.vue";
-import JobTitleEditor from "../components/JobTitleEditor.vue";
+import JobEditDialog from "../components/JobEditDialog.vue";
 import LocalPickerDialog from "../components/LocalPickerDialog.vue";
 import Pagination from "../components/Pagination.vue";
 import { pageAfterSizeChange } from "../utils/pager";
@@ -116,6 +117,9 @@ const catalogSubmitting = ref(false);
 const batchBusy = ref(false);
 const selectedIds = ref<Set<string>>(new Set());
 const deleting = ref<{ title: string; ids: string[] } | null>(null);
+const editing = ref<Job | null>(null);
+const editingBusy = ref(false);
+const moreMenuId = ref("");
 const nowMs = ref(Date.now());
 const filterTitle = ref("");
 const filterStatus = ref("");
@@ -346,16 +350,50 @@ function offPageSelectedIds() {
   return [...selectedIds.value].filter((id) => !onPage.has(id));
 }
 
-async function rename(job: Job, nextTitle: string) {
+async function saveJobInfo(
+  job: Job,
+  next: { title: string; author: string }
+): Promise<boolean> {
   try {
-    const updated = await api.updateJob(job.id, { title: nextTitle });
+    const updated = await api.updateJob(job.id, {
+      title: next.title,
+      author: next.author,
+    });
     const index = jobs.value.findIndex((item) => item.id === job.id);
     if (index >= 0)
-      jobs.value[index] = { ...jobs.value[index], title: updated.title };
+      jobs.value[index] = {
+        ...jobs.value[index],
+        title: updated.title,
+        author: updated.author,
+      };
+    return true;
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "修改标题失败");
-    throw err;
+    toast.error(err instanceof Error ? err.message : "保存失败");
+    return false;
   }
+}
+
+function askEdit(job: Job) {
+  closeMoreMenu();
+  editing.value = job;
+}
+
+async function saveJobEdit(next: { title: string; author: string }) {
+  const job = editing.value;
+  if (!job || editingBusy.value) return;
+  editingBusy.value = true;
+  const saved = await saveJobInfo(job, next);
+  editingBusy.value = false;
+  if (saved) editing.value = null;
+}
+
+function toggleMoreMenu(event: MouseEvent, id: string) {
+  event.stopPropagation();
+  moreMenuId.value = moreMenuId.value === id ? "" : id;
+}
+
+function closeMoreMenu() {
+  moreMenuId.value = "";
 }
 
 async function cancel(job: Job) {
@@ -909,6 +947,7 @@ function jobSourceLine(job: Job) {
 }
 
 onMounted(async () => {
+  document.addEventListener("click", closeMoreMenu);
   void loadLocalRoot();
   await refresh();
   syncClock();
@@ -921,6 +960,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("click", closeMoreMenu);
   if (timer) window.clearInterval(timer);
   if (clock !== undefined) window.clearInterval(clock);
 });
@@ -1376,47 +1416,65 @@ onBeforeUnmount(() => {
             >
               {{ formatDateStamp(job.source_created_at) }}
             </Badge>
-            <JobTitleEditor
-              :title="job.title"
-              :href="`/jobs/${job.id}`"
-              :save="(next) => rename(job, next)"
-            />
+            <router-link class="list-title-link" :to="`/jobs/${job.id}`">
+              <strong>{{ job.title || "未命名任务" }}</strong>
+            </router-link>
+            <Badge
+              variant="outline"
+              class="tag"
+              :class="{
+                ok: job.status === 'done',
+                bad: job.status === 'failed',
+                warn: isJobActive(job.status),
+              }"
+            >
+              {{ statusLabel(job.status, job.stage) }}
+              <template v-if="isJobActive(job.status)">
+                {{ job.progress }}% ·
+                {{ formatDuration(jobElapsedSeconds(job, nowMs)) }}</template
+              >
+            </Badge>
           </div>
           <div class="msg">{{ jobSourceLine(job) }}</div>
         </div>
       </div>
-      <div class="list-actions">
-        <Badge
-          variant="outline"
-          class="tag"
-          :class="{
-            ok: job.status === 'done',
-            bad: job.status === 'failed',
-            warn: isJobActive(job.status),
-          }"
+      <div class="action-menu">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="icon-btn action-menu-trigger"
+          type="button"
+          aria-label="更多操作"
+          title="更多"
+          :aria-expanded="moreMenuId === job.id"
+          @click="toggleMoreMenu($event, job.id)"
         >
-          {{ statusLabel(job.status, job.stage) }}
-          <template v-if="isJobActive(job.status)">
-            {{ job.progress }}% ·
-            {{ formatDuration(jobElapsedSeconds(job, nowMs)) }}</template
+          <EllipsisVertical />
+        </Button>
+        <div
+          class="action-menu-items"
+          :class="{ 'is-open': moreMenuId === job.id }"
+        >
+          <Button
+            v-if="isJobActive(job.status)"
+            variant="destructive"
+            type="button"
+            @click.prevent="cancel(job)"
           >
-        </Badge>
-        <Button
-          v-if="isJobActive(job.status)"
-          variant="destructive"
-          type="button"
-          @click.prevent="cancel(job)"
-        >
-          取消
-        </Button>
-        <Button
-          variant="outline"
-          class="text-destructive"
-          type="button"
-          @click.prevent="askDelete(job)"
-        >
-          删除
-        </Button>
+            取消
+          </Button>
+          <Button variant="outline" type="button" @click.prevent="askEdit(job)">
+            编辑
+          </Button>
+          <Button
+            variant="outline"
+            class="text-destructive"
+            type="button"
+            @click.prevent="askDelete(job)"
+          >
+            删除
+          </Button>
+        </div>
       </div>
     </div>
     <Pagination
@@ -1448,5 +1506,13 @@ onBeforeUnmount(() => {
     :count="deleting?.ids.length || 0"
     @close="deleting = null"
     @confirm="confirmDelete"
+  />
+  <JobEditDialog
+    :open="Boolean(editing)"
+    :title="editing?.title || ''"
+    :author="editing?.author || ''"
+    :busy="editingBusy"
+    @close="editing = null"
+    @save="saveJobEdit"
   />
 </template>
