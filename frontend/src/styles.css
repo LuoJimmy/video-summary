@@ -1861,6 +1861,14 @@ label.check small {
   font-weight: 400;
 }
 
+/* 中等宽度（901–1250px）：主内容区变窄，两列固定 28rem 的表单会横向溢出，
+   这里把列改成等分自适应，字段靠自身 max-width: 100% 跟随收缩。 */
+@media (min-width: 901px) and (max-width: 1250px) {
+  .grid.two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
   .shell {
     display: block;
