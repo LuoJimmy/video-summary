@@ -2,29 +2,88 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.schemas import ScheduleIn, ScheduleLogOut, ScheduleOut
-from app.services.schedule import clear_logs, list_logs, load_schedule, run_once, save_schedule, start_detached_run
+from app.schemas import ScheduleLogOut, ScheduleRuleIn, ScheduleRuleOut, ScheduleRuleSiteOut
+from app.services.schedule import (
+    clear_logs,
+    delete_rule,
+    enabled_rule_ids,
+    list_logs,
+    list_rules,
+    list_schedule_sites,
+    run_once,
+    save_rule,
+    start_detached_run,
+)
 
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
 
 
-@router.get("", response_model=ScheduleOut)
-def get_schedule(db: Session = Depends(get_db)) -> ScheduleOut:
-    return load_schedule(db)
+@router.get("/rules", response_model=list[ScheduleRuleOut])
+def get_schedule_rules(db: Session = Depends(get_db)) -> list[ScheduleRuleOut]:
+    return list_rules(db)
 
 
-@router.put("", response_model=ScheduleOut)
-def put_schedule(payload: ScheduleIn, db: Session = Depends(get_db)) -> ScheduleOut:
+@router.get("/sites", response_model=list[ScheduleRuleSiteOut])
+def get_schedule_sites(db: Session = Depends(get_db)) -> list[ScheduleRuleSiteOut]:
+    return list_schedule_sites(db)
+
+
+@router.post("/rules", response_model=ScheduleRuleOut)
+def create_schedule_rule(payload: ScheduleRuleIn, db: Session = Depends(get_db)) -> ScheduleRuleOut:
     try:
-        return save_schedule(db, payload)
+        return save_rule(db, payload)
     except ValueError as exc:
+        db.rollback()
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.put("/rules/{rule_id}", response_model=ScheduleRuleOut)
+def update_schedule_rule(rule_id: str, payload: ScheduleRuleIn, db: Session = Depends(get_db)) -> ScheduleRuleOut:
+    try:
+        return save_rule(db, payload, rule_id)
+    except LookupError as exc:
+        db.rollback()
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.delete("/rules/{rule_id}")
+def delete_schedule_rule(rule_id: str, db: Session = Depends(get_db)) -> dict:
+    try:
+        return delete_rule(db, rule_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/rules/{rule_id}/run", response_model=ScheduleLogOut)
+def run_schedule_rule(
+    rule_id: str,
+    wait: bool = Query(True),
+    db: Session = Depends(get_db),
+) -> ScheduleLogOut:
+    if wait:
+        try:
+            return run_once("manual", db=db, rule_id=rule_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+    try:
+        return start_detached_run("manual", rule_id)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @router.post("/run", response_model=ScheduleLogOut)
 def run_schedule(wait: bool = Query(True), db: Session = Depends(get_db)) -> ScheduleLogOut:
+    """立即执行：把当前所有启用的定时配置都扫一轮。"""
     if wait:
-        return run_once("manual", db=db)
+        last: ScheduleLogOut | None = None
+        for rule_id in enabled_rule_ids(db):
+            last = run_once("manual", db=db, rule_id=rule_id)
+        if last is None:
+            raise HTTPException(400, "还没有启用的定时配置")
+        return last
     try:
         return start_detached_run("manual")
     except RuntimeError as exc:

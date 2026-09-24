@@ -46,3 +46,7 @@ def migrate_job_columns() -> None:
         log_names = {row[1] for row in conn.execute(text("PRAGMA table_info(schedule_logs)")).fetchall()}
         if log_names and "digest_job_id" not in log_names:
             conn.execute(text("ALTER TABLE schedule_logs ADD COLUMN digest_job_id VARCHAR(32) DEFAULT ''"))
+        if log_names and "rule_id" not in log_names:
+            conn.execute(text("ALTER TABLE schedule_logs ADD COLUMN rule_id VARCHAR(32) DEFAULT ''"))
+        if log_names and "rule_name" not in log_names:
+            conn.execute(text("ALTER TABLE schedule_logs ADD COLUMN rule_name VARCHAR(120) DEFAULT ''"))

@@ -51,12 +51,13 @@ describe("parseChangelog", () => {
     expect(parseChangelog("## 未发布\n\n- 草稿")).toEqual([]);
   });
 
-  it("仓库更新日志包含 1.2.0", () => {
+  it("仓库更新日志最新版本可用", () => {
     const releases = parseChangelog(changelogMarkdown);
-    expect(releases[0]?.version).toBe("1.2.0");
-    expect(releases[0]?.date).toBe("2026-09-21");
+    expect(releases[0]?.version).toBe("1.3.0");
+    expect(releases[0]?.date).toBe("2026-09-24");
     expect(releases[0]?.sections.some((item) => item.items.length > 0)).toBe(
       true
     );
+    expect(releases.some((item) => item.version === "1.0.0")).toBe(true);
   });
 });

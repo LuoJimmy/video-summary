@@ -2,10 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Job, ScheduleLog, utcnow
-from app.schemas import ScheduleIn, ScheduleSiteIn
+from app.models import Job, ScheduleLog, ScheduleRule, utcnow
+from app.schemas import ScheduleRuleIn, ScheduleRuleSiteIn
 from app.services.ingest.base import CatalogItem
-from app.services.schedule import load_schedule, missed_scheduled_run, seconds_until_tick
+from app.services.schedule import missed_scheduled_run, seconds_until_tick, seconds_until_next_tick
 from app.services.sourcetime import SHANGHAI
 
 
@@ -32,24 +32,17 @@ def _enable_xiaoe(client, catalog_id="appdemo", max_jobs=5):
             {"site_id": sites["bilibili"]["id"], "enabled": False, "catalog_id": ""},
         ],
     }
-    saved = client.put("/api/schedule", json=payload)
+    saved = client.post("/api/schedule/rules", json=payload)
     assert saved.status_code == 200, saved.text
     return xiaoe, saved.json()
 
 
 def test_schedule_default_and_validation(client):
-    data = client.get("/api/schedule").json()
-    assert data["enabled"] is False
-    assert data["time"] == "08:00"
-    assert data["max_jobs"] == 5
-    assert data["digest_enabled"] is True
-    adapters = {item["adapter"] for item in data["sites"]}
-    assert adapters == {"xiaoe", "yueniu", "bilibili"}
-    assert "generic" not in adapters
+    assert client.get("/api/schedule/rules").json() == []
 
     sites = _sites_by_adapter(client)
-    bad = client.put(
-        "/api/schedule",
+    bad = client.post(
+        "/api/schedule/rules",
         json={
             "enabled": True,
             "time": "08:00",
@@ -59,6 +52,51 @@ def test_schedule_default_and_validation(client):
     )
     assert bad.status_code == 400
     assert "app_id" in bad.text
+
+    saved = client.post(
+        "/api/schedule/rules",
+        json={
+            "name": "早班",
+            "enabled": True,
+            "time": "07:30",
+            "max_jobs": 8,
+            "domain_id": "a-share",
+            "sites": [{"site_id": sites["xiaoe"]["id"], "enabled": True, "catalog_id": "appdemo"}],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    rule = saved.json()
+    assert rule["name"] == "早班"
+    assert rule["time"] == "07:30"
+    assert rule["max_jobs"] == 8
+    assert rule["digest_enabled"] is True
+    adapters = {item["adapter"] for item in rule["sites"]}
+    assert adapters == {"xiaoe", "yueniu", "bilibili"}
+    assert "generic" not in adapters
+    listed = client.get("/api/schedule/rules").json()
+    assert [item["id"] for item in listed] == [rule["id"]]
+
+    updated = client.put(
+        f"/api/schedule/rules/{rule['id']}",
+        json={
+            "name": "晚班",
+            "enabled": False,
+            "time": "18:01",
+            "max_jobs": 3,
+            "sites": [{"site_id": sites["xiaoe"]["id"], "enabled": True, "catalog_id": "appdemo"}],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["name"] == "晚班"
+    assert updated.json()["enabled"] is False
+    removed = client.delete(f"/api/schedule/rules/{rule['id']}")
+    assert removed.status_code == 200
+    assert client.get("/api/schedule/rules").json() == []
+    missing = client.put(
+        "/api/schedule/rules/nope",
+        json={"enabled": False, "time": "08:00", "max_jobs": 5, "sites": []},
+    )
+    assert missing.status_code == 404
 
 
 def test_schedule_skips_existing_url(client, db_session, monkeypatch):
@@ -280,8 +318,8 @@ def test_schedule_site_error_is_partial(client, monkeypatch):
     from app.services.ingest.base import CatalogError
 
     sites = _sites_by_adapter(client)
-    client.put(
-        "/api/schedule",
+    client.post(
+        "/api/schedule/rules",
         json={
             "enabled": True,
             "time": "08:00",
@@ -348,8 +386,8 @@ def test_schedule_bilibili_rate_limit_errors_are_deduped(client, monkeypatch):
 
     monkeypatch.setattr("app.services.schedule.BILI_CATALOG_PAUSE", 0)
     sites = _sites_by_adapter(client)
-    saved = client.put(
-        "/api/schedule",
+    saved = client.post(
+        "/api/schedule/rules",
         json={
             "enabled": True,
             "time": "08:00",
@@ -378,8 +416,8 @@ def test_schedule_bilibili_stops_remaining_ups_after_rate_limit(client, monkeypa
 
     monkeypatch.setattr("app.services.schedule.BILI_CATALOG_PAUSE", 0)
     sites = _sites_by_adapter(client)
-    saved = client.put(
-        "/api/schedule",
+    saved = client.post(
+        "/api/schedule/rules",
         json={
             "enabled": True,
             "time": "08:00",
@@ -410,8 +448,8 @@ def test_schedule_bilibili_keeps_created_jobs_when_later_up_rate_limited(client,
 
     monkeypatch.setattr("app.services.schedule.BILI_CATALOG_PAUSE", 0)
     sites = _sites_by_adapter(client)
-    saved = client.put(
-        "/api/schedule",
+    saved = client.post(
+        "/api/schedule/rules",
         json={
             "enabled": True,
             "time": "08:00",
@@ -452,8 +490,8 @@ def test_schedule_hides_rate_limit_when_quota_filled(client, monkeypatch):
 
     monkeypatch.setattr("app.services.schedule.BILI_CATALOG_PAUSE", 0)
     sites = _sites_by_adapter(client)
-    saved = client.put(
-        "/api/schedule",
+    saved = client.post(
+        "/api/schedule/rules",
         json={
             "enabled": True,
             "time": "08:00",
@@ -530,73 +568,100 @@ def test_extra_xiaoe_site_appears_in_schedule(client):
         },
     )
     assert created.status_code == 200, created.text
-    data = client.get("/api/schedule").json()
-    names = [item["name"] for item in data["sites"] if item["adapter"] == "xiaoe"]
+    _, rule = _enable_xiaoe(client)
+    names = [item["name"] for item in rule["sites"] if item["adapter"] == "xiaoe"]
     assert "小鹅通" in names
     assert "启富课堂" in names
 
 
 def test_seconds_until_tick_and_missed_run(db_session):
     from app.models import Site
-    from app.services.schedule import save_schedule
+    from app.services.schedule import save_rule
 
     wait = seconds_until_tick(False, "08:00")
     assert wait == 3600.0
     now = datetime(2026, 9, 10, 9, 0, tzinfo=SHANGHAI)
     assert seconds_until_tick(True, "08:00", now) > 3600
-    assert missed_scheduled_run(db_session, now) is False
     xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
-    save_schedule(
+    saved = save_rule(
         db_session,
-        ScheduleIn(
-            enabled=True,
+        ScheduleRuleIn(
+            enabled=False,
             time="08:00",
             max_jobs=5,
-            sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+            sites=[ScheduleRuleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
         ),
     )
-    assert missed_scheduled_run(db_session, now) is True
+    rule = db_session.get(ScheduleRule, saved.id)
+    assert missed_scheduled_run(db_session, rule, now) is False
+    rule.enabled = True
+    db_session.commit()
+    assert missed_scheduled_run(db_session, rule, now) is True
     morning = datetime(2026, 9, 10, 7, 0, tzinfo=SHANGHAI)
-    assert missed_scheduled_run(db_session, morning) is False
+    assert missed_scheduled_run(db_session, rule, morning) is False
+
+
+def test_seconds_until_next_tick_picks_earliest_rule(db_session):
+    from app.models import Site
+    from app.services.schedule import list_rules, save_rule
+
+    xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
+    for time_text in ("09:00", "18:01"):
+        save_rule(
+            db_session,
+            ScheduleRuleIn(
+                name=time_text,
+                enabled=True,
+                time=time_text,
+                max_jobs=5,
+                sites=[ScheduleRuleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+            ),
+        )
+    rules = [db_session.get(ScheduleRule, item.id) for item in list_rules(db_session)]
+    now = datetime(2026, 9, 16, 8, 0, tzinfo=SHANGHAI)
+    assert seconds_until_next_tick(rules, now) == seconds_until_tick(True, "09:00", now)
+    assert seconds_until_next_tick([], now) == 3600.0
 
 
 def test_schedule_time_is_shanghai_even_in_utc_process(db_session):
     """容器 / 进程时区是 UTC 时，18:01 仍要按北京时间解释，不能被当成 UTC 18:01。"""
     from app.models import Site
-    from app.services.schedule import save_schedule
+    from app.services.schedule import save_rule
 
     xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
-    save_schedule(
+    saved = save_rule(
         db_session,
-        ScheduleIn(
+        ScheduleRuleIn(
             enabled=True,
             time="18:01",
             max_jobs=5,
-            sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+            sites=[ScheduleRuleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
         ),
     )
+    rule = db_session.get(ScheduleRule, saved.id)
     before = datetime(2026, 9, 23, 9, 0, tzinfo=timezone.utc)  # 北京 17:00
     assert 3659 < seconds_until_tick(True, "18:01", before) < 3662
-    assert missed_scheduled_run(db_session, before) is False
+    assert missed_scheduled_run(db_session, rule, before) is False
     at_time = datetime(2026, 9, 23, 10, 1, tzinfo=timezone.utc)  # 北京 18:01
-    assert missed_scheduled_run(db_session, at_time) is True
+    assert missed_scheduled_run(db_session, rule, at_time) is True
 
 
 def test_missed_scheduled_run_ignores_skip_log(db_session):
     """「已跳过」记录不算执行过，不能挡住当天补跑。"""
     from app.models import Site
-    from app.services.schedule import save_schedule
+    from app.services.schedule import save_rule
 
     xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
-    save_schedule(
+    saved = save_rule(
         db_session,
-        ScheduleIn(
+        ScheduleRuleIn(
             enabled=True,
             time="18:01",
             max_jobs=5,
-            sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+            sites=[ScheduleRuleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
         ),
     )
+    rule = db_session.get(ScheduleRule, saved.id)
     at_time = datetime(2026, 9, 23, 10, 1, tzinfo=timezone.utc)  # 北京 18:01
     db_session.add(
         ScheduleLog(
@@ -604,63 +669,71 @@ def test_missed_scheduled_run_ignores_skip_log(db_session):
             status="skipped",
             summary="今天已经执行过定时任务，本轮到点不再扫描",
             finished_at=datetime(2026, 9, 23, 10, 1),
+            rule_id=rule.id,
         )
     )
     db_session.commit()
-    assert missed_scheduled_run(db_session, at_time) is True
+    assert missed_scheduled_run(db_session, rule, at_time) is True
 
 
-def test_run_due_tick_notes_skip_and_runs_when_due(db_session, monkeypatch):
+def test_run_due_ticks_note_skip_and_run_when_due(db_session, monkeypatch):
     """到点评估：没到点不留痕；到点没跑过就扫描；当天跑过则留一条「已跳过」。"""
     from app.models import Site
     from app.services import schedule as schedule_service
 
     TestingSession = sessionmaker(bind=db_session.get_bind(), autoflush=False, autocommit=False)
     monkeypatch.setattr(schedule_service, "SessionLocal", TestingSession)
-    monkeypatch.setattr(schedule_service, "_skip_log_day", "")
+    monkeypatch.setattr(schedule_service, "_skip_logged", set())
     ran: list[str] = []
-    monkeypatch.setattr(schedule_service, "_safe_run_once", lambda trigger: ran.append(trigger))
+    monkeypatch.setattr(
+        schedule_service,
+        "_safe_run_once",
+        lambda trigger, rule_id="": ran.append(rule_id),
+    )
 
     xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
-    schedule_service.save_schedule(
+    saved = schedule_service.save_rule(
         db_session,
-        ScheduleIn(
+        ScheduleRuleIn(
             enabled=True,
             time="18:01",
             max_jobs=5,
-            sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+            sites=[ScheduleRuleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
         ),
     )
+    rule_id = saved.id
     before = datetime(2026, 9, 23, 9, 0, tzinfo=timezone.utc)  # 北京 17:00
     at_time = datetime(2026, 9, 23, 10, 1, tzinfo=timezone.utc)  # 北京 18:01
 
     db_session.rollback()
-    assert schedule_service._run_due_tick("cron", before) is False
+    assert schedule_service._run_due_ticks("cron", before) == []
     db_session.rollback()
     assert ran == []
     assert db_session.query(ScheduleLog).count() == 0
 
-    assert schedule_service._run_due_tick("cron", at_time) is True
+    assert schedule_service._run_due_ticks("cron", at_time) == [rule_id]
     db_session.rollback()
-    assert ran == ["cron"]
+    assert ran == [rule_id]
     assert db_session.query(ScheduleLog).count() == 0
 
-    monkeypatch.setattr(schedule_service, "_skip_log_day", "")
+    monkeypatch.setattr(schedule_service, "_skip_logged", set())
     db_session.add(
         ScheduleLog(
             trigger="cron",
             status="ok",
             summary="当天已经跑过",
             finished_at=datetime(2026, 9, 23, 10, 0),
+            rule_id=rule_id,
         )
     )
     db_session.commit()
-    assert schedule_service._run_due_tick("cron", at_time) is False
+    assert schedule_service._run_due_ticks("cron", at_time) == []
     db_session.rollback()
-    assert ran == ["cron"]
+    assert ran == [rule_id]
     skipped = db_session.query(ScheduleLog).filter(ScheduleLog.status == "skipped").all()
     assert len(skipped) == 1
     assert skipped[0].trigger == "cron"
+    assert skipped[0].rule_id == rule_id
     assert "已经执行过" in skipped[0].summary
     assert skipped[0].finished_at is not None
 
@@ -670,8 +743,8 @@ def test_cron_does_not_run_when_schedule_disabled(client, db_session, monkeypatc
     from app.services.schedule import run_once
 
     sites = _sites_by_adapter(client)
-    saved = client.put(
-        "/api/schedule",
+    saved = client.post(
+        "/api/schedule/rules",
         json={
             "enabled": False,
             "time": "08:00",
@@ -777,8 +850,8 @@ def test_schedule_digest_disabled_skips_digest_log(client, monkeypatch):
 
     monkeypatch.setattr("app.services.schedule._execute_jobs", fake_execute)
     sites = _sites_by_adapter(client)
-    saved = client.put(
-        "/api/schedule",
+    saved = client.post(
+        "/api/schedule/rules",
         json={
             "enabled": True,
             "time": "08:00",
@@ -829,16 +902,27 @@ def test_run_created_jobs_digest_only_with_log(monkeypatch):
 
 
 def test_start_detached_run_skips_previous_completed_log(db_session, monkeypatch):
-    from app.services.schedule import start_detached_run
+    from app.models import Site
+    from app.services.schedule import save_rule, start_detached_run
 
     TestingSession = sessionmaker(bind=db_session.get_bind(), autoflush=False, autocommit=False)
     monkeypatch.setattr("app.services.schedule.SessionLocal", TestingSession)
+    xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
+    save_rule(
+        db_session,
+        ScheduleRuleIn(
+            enabled=True,
+            time="08:00",
+            max_jobs=5,
+            sites=[ScheduleRuleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
+        ),
+    )
     old = ScheduleLog(trigger="manual", status="ok", summary="旧日志", finished_at=utcnow())
     db_session.add(old)
     db_session.commit()
     old_id = old.id
 
-    def fake_run(trigger="manual", execute=True, db=None):
+    def fake_run(trigger="manual", execute=True, db=None, rule_id=None):
         session = TestingSession()
         try:
             row = ScheduleLog(trigger=trigger, status="running", summary="正在扫描站点")

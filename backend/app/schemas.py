@@ -387,22 +387,23 @@ class LexiconOut(LexiconIn):
     preset: str = "a-share"
 
 
-class ScheduleSiteIn(BaseModel):
+class ScheduleRuleSiteIn(BaseModel):
     site_id: str
     enabled: bool = False
     catalog_id: str = ""
 
 
-class ScheduleIn(BaseModel):
+class ScheduleRuleIn(BaseModel):
+    name: str = ""
     enabled: bool = False
     time: str = "08:00"
     max_jobs: int = 5
     domain_id: str = ""
     digest_enabled: bool = True
-    sites: list[ScheduleSiteIn] = Field(default_factory=list)
+    sites: list[ScheduleRuleSiteIn] = Field(default_factory=list)
 
 
-class ScheduleSiteOut(BaseModel):
+class ScheduleRuleSiteOut(BaseModel):
     site_id: str
     name: str
     adapter: str
@@ -411,13 +412,15 @@ class ScheduleSiteOut(BaseModel):
     catalog_hint: str = ""
 
 
-class ScheduleOut(BaseModel):
+class ScheduleRuleOut(BaseModel):
+    id: str
+    name: str = ""
     enabled: bool = False
     time: str = "08:00"
     max_jobs: int = 5
     domain_id: str = ""
     digest_enabled: bool = True
-    sites: list[ScheduleSiteOut] = Field(default_factory=list)
+    sites: list[ScheduleRuleSiteOut] = Field(default_factory=list)
 
 
 class ScheduleLogSiteDetail(BaseModel):
@@ -438,3 +441,5 @@ class ScheduleLogOut(BaseModel):
     summary: str = ""
     detail: list[ScheduleLogSiteDetail] = Field(default_factory=list)
     digest_job_id: str = ""
+    rule_id: str = ""
+    rule_name: str = ""

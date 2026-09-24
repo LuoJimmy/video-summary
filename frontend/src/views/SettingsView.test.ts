@@ -25,8 +25,12 @@ vi.mock("../api", () => ({
     lexicon: vi.fn(),
     saveLexicon: vi.fn(),
     resetLexicon: vi.fn(),
-    schedule: vi.fn(),
-    saveSchedule: vi.fn(),
+    scheduleRules: vi.fn(),
+    scheduleSites: vi.fn(),
+    createScheduleRule: vi.fn(),
+    updateScheduleRule: vi.fn(),
+    deleteScheduleRule: vi.fn(),
+    runScheduleRule: vi.fn(),
     runSchedule: vi.fn(),
     scheduleLogs: vi.fn(),
     clearScheduleLogs: vi.fn(),
@@ -37,29 +41,36 @@ vi.mock("../api", () => ({
   },
 }));
 
-const sampleSchedule = {
-  enabled: false,
+const sampleSites = [
+  {
+    site_id: "xiaoe-1",
+    name: "小鹅通",
+    adapter: "xiaoe",
+    enabled: false,
+    catalog_id: "",
+    catalog_hint: "店铺 app_id，或店铺 H5 地址",
+  },
+  {
+    site_id: "yueniu-1",
+    name: "加菲财经/约牛",
+    adapter: "yueniu",
+    enabled: false,
+    catalog_id: "",
+    catalog_hint: "可空；填写则按作者 authorId 过滤",
+  },
+];
+
+const sampleRule = {
+  id: "rule-1",
+  name: "B站早班",
+  enabled: true,
   time: "08:00",
   max_jobs: 5,
   domain_id: "a-share",
   digest_enabled: true,
   sites: [
-    {
-      site_id: "xiaoe-1",
-      name: "小鹅通",
-      adapter: "xiaoe",
-      enabled: false,
-      catalog_id: "",
-      catalog_hint: "店铺 app_id，或店铺 H5 地址",
-    },
-    {
-      site_id: "yueniu-1",
-      name: "加菲财经/约牛",
-      adapter: "yueniu",
-      enabled: false,
-      catalog_id: "",
-      catalog_hint: "可空；填写则按作者 authorId 过滤",
-    },
+    { ...sampleSites[0], enabled: true, catalog_id: "appdemo" },
+    sampleSites[1],
   ],
 };
 
@@ -119,9 +130,12 @@ async function mountSettings(
     summary: string;
     detail: unknown[];
     digest_job_id?: string;
+    rule_id?: string;
+    rule_name?: string;
   }> = [],
   plugins: PluginInfo[] = samplePlugins,
-  path = "/settings"
+  path = "/settings",
+  rules: Array<typeof sampleRule> = [sampleRule]
 ) {
   vi.mocked(api.settings).mockResolvedValue(settings);
   vi.mocked(api.lexicon).mockResolvedValue({
@@ -129,7 +143,8 @@ async function mountSettings(
     fixes: [],
     customized: false,
   });
-  vi.mocked(api.schedule).mockResolvedValue(sampleSchedule);
+  vi.mocked(api.scheduleRules).mockResolvedValue(rules);
+  vi.mocked(api.scheduleSites).mockResolvedValue(sampleSites);
   vi.mocked(api.scheduleLogs).mockResolvedValue(logs);
   vi.mocked(api.plugins).mockResolvedValue(plugins);
   const router = createRouter({
@@ -302,7 +317,7 @@ describe("设置页模型限制说明", () => {
     ).toBe("true");
   });
 
-  it("展示定时任务站点与日志区", async () => {
+  it("展示定时任务配置与日志区", async () => {
     const el = await mountSettings(localSettings, [
       {
         id: "log-1",
@@ -313,6 +328,8 @@ describe("设置页模型限制说明", () => {
         summary: "小鹅通：新建 1，跳过 2",
         detail: [],
         digest_job_id: "digest-1",
+        rule_id: "rule-1",
+        rule_name: "B站早班",
       },
       {
         id: "log-2",
@@ -323,33 +340,62 @@ describe("设置页模型限制说明", () => {
         summary: "今天已经执行过定时任务，本轮到点不再扫描",
         detail: [],
         digest_job_id: "",
+        rule_name: "B站早班",
       },
     ]);
     expect(el.textContent).toContain("定时任务");
-    expect(el.textContent).toContain("生成汇总总结");
     expect(el.textContent).toContain("查看汇总");
     expect(
       el.querySelector(".schedule-digest-link")?.getAttribute("href")
     ).toBe("/jobs/digest-1?from=schedule");
-    expect(el.textContent).toContain("小鹅通");
+    expect(el.textContent).toContain("B站早班");
+    expect(el.querySelector('[aria-label="新增定时配置"]')).toBeTruthy();
+    expect(el.querySelector('[aria-label="删除当前配置"]')).toBeTruthy();
+    expect(el.textContent).toContain("展开站点与汇总");
     expect(el.textContent).not.toContain("从哪天开始");
-    expect(el.textContent).toContain("立即执行");
     expect(el.textContent).toContain("当天发布");
     expect(el.textContent).toContain("多个 UP");
     expect(el.textContent).toContain("小鹅通：新建 1，跳过 2");
     expect(el.textContent).toContain("已跳过");
     expect(el.querySelector(".schedule-log-list li.is-skipped")).toBeTruthy();
-    const saveBtn = [...el.querySelectorAll("button")].find((item) =>
-      item.textContent?.includes("保存定时")
+
+    const detailsBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("展开站点与汇总")
     );
-    expect(saveBtn).toBeTruthy();
-    vi.mocked(api.saveSchedule).mockResolvedValue({
-      ...sampleSchedule,
-      enabled: true,
-    });
-    saveBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(detailsBtn).toBeTruthy();
+    detailsBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flush();
-    expect(api.saveSchedule).toHaveBeenCalledTimes(1);
+    expect(el.textContent).toContain("收起站点与汇总");
+    expect(el.textContent).toContain("生成汇总总结");
+    expect(el.querySelector(".schedule-catalog")).toBeTruthy();
+
+    vi.mocked(api.updateScheduleRule).mockResolvedValue(sampleRule);
+    const saveRuleBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("保存配置")
+    );
+    expect(saveRuleBtn).toBeTruthy();
+    saveRuleBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.updateScheduleRule).toHaveBeenCalledTimes(1);
+
+    vi.mocked(api.createScheduleRule).mockResolvedValue({
+      ...sampleRule,
+      id: "rule-2",
+      name: "定时配置 2",
+    });
+    const addBtn = el.querySelector(
+      '[aria-label="新增定时配置"]'
+    ) as HTMLButtonElement | null;
+    expect(addBtn).toBeTruthy();
+    addBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    const saveNewBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("保存配置")
+    );
+    saveNewBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.createScheduleRule).toHaveBeenCalledTimes(1);
+
     const clearBtn = [...el.querySelectorAll("button")].find((item) =>
       item.textContent?.includes("清除日志")
     );
@@ -387,10 +433,8 @@ describe("设置页模型限制说明", () => {
         })
     );
     const el = await mountSettings(localSettings);
-    const runBtn = [...el.querySelectorAll("button")].find(
-      (item) =>
-        !item.classList.contains("info-tip") &&
-        item.textContent?.includes("立即执行")
+    const runBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("立即执行全部")
     ) as HTMLButtonElement | undefined;
     expect(runBtn).toBeTruthy();
     runBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -442,10 +486,8 @@ describe("设置页模型限制说明", () => {
     const el = await mountSettings(localSettings, [oldLog]);
     vi.mocked(api.runSchedule).mockResolvedValue(oldLog);
     vi.mocked(api.scheduleLogs).mockResolvedValue([newLog, oldLog]);
-    const runBtn = [...el.querySelectorAll("button")].find(
-      (item) =>
-        !item.classList.contains("info-tip") &&
-        item.textContent?.includes("立即执行")
+    const runBtn = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("立即执行全部")
     ) as HTMLButtonElement | undefined;
     runBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flush();

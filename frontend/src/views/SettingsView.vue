@@ -13,8 +13,10 @@ import {
   type AppSettings,
   type LexiconFix,
   type PluginInfo,
-  type ScheduleConfig,
   type ScheduleLog,
+  type ScheduleRule,
+  type ScheduleRuleInput,
+  type ScheduleSite,
 } from "../api";
 import { emptyDomainPack, type DomainPack } from "../utils/domain";
 import {
@@ -90,16 +92,24 @@ const fixes = ref<LexiconFix[]>([]);
 const savingLexicon = ref(false);
 const themeId = ref<ThemeId>(readTheme());
 const transcribeSource = ref<"local" | "custom">("local");
-const schedule = ref<ScheduleConfig>({
-  enabled: false,
+const scheduleRules = ref<ScheduleRule[]>([]);
+const scheduleSites = ref<ScheduleSite[]>([]);
+const ruleDraft = ref<ScheduleRuleInput>({
+  name: "定时配置 1",
+  enabled: true,
   time: "08:00",
   max_jobs: 5,
   domain_id: "a-share",
   digest_enabled: true,
   sites: [],
 });
+const selectedRuleId = ref("");
+const showRuleDetails = ref(false);
+const savingRule = ref(false);
+const deletingRule = ref<ScheduleRule | null>(null);
+const deletingRuleBusy = ref(false);
+const runningRuleId = ref("");
 const scheduleLogs = ref<ScheduleLog[]>([]);
-const savingSchedule = ref(false);
 const runningSchedule = ref(false);
 const PENDING_RUN_ID = "pending-run";
 let runWatching = false;
@@ -199,11 +209,12 @@ const threadSelect = computed({
       : defaultThreadHint.value;
   },
 });
-const maxJobsSelect = computed({
-  get: () => String(Math.max(1, Math.min(20, schedule.value.max_jobs || 5))),
+const ruleMaxJobsSelect = computed({
+  get: () => String(Math.max(1, Math.min(20, ruleDraft.value?.max_jobs || 5))),
   set: (value: string) => {
+    if (!ruleDraft.value) return;
     const parsed = Number(value);
-    schedule.value.max_jobs = Number.isFinite(parsed)
+    ruleDraft.value.max_jobs = Number.isFinite(parsed)
       ? Math.max(1, Math.min(20, Math.round(parsed)))
       : 5;
   },
@@ -343,12 +354,20 @@ async function loadLexicon(preset?: string) {
 
 async function loadSchedule() {
   try {
-    const [next, logs] = await Promise.all([
-      api.schedule(),
+    const [rules, sites, logs] = await Promise.all([
+      api.scheduleRules(),
+      api.scheduleSites(),
       api.scheduleLogs(),
     ]);
-    schedule.value = next;
+    scheduleRules.value = rules;
+    scheduleSites.value = sites;
     scheduleLogs.value = logs;
+    if (rules.length) {
+      applyScheduleRule(rules[0]);
+    } else {
+      selectedRuleId.value = "";
+      ruleDraft.value = newRuleDraft();
+    }
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "无法加载定时任务设置");
   }
@@ -441,24 +460,128 @@ async function uninstallDocPlugin() {
   }
 }
 
-async function saveSchedule() {
-  if (savingSchedule.value) return;
-  savingSchedule.value = true;
+function newRuleDraft(): ScheduleRuleInput {
+  const fallback = scheduleRules.value[0];
+  const source = fallback ? fallback.sites : scheduleSites.value;
+  return {
+    name: `定时配置 ${scheduleRules.value.length + 1}`,
+    enabled: true,
+    time: fallback?.time ?? "08:00",
+    max_jobs: fallback?.max_jobs ?? 5,
+    domain_id: fallback?.domain_id ?? "a-share",
+    digest_enabled: fallback?.digest_enabled ?? true,
+    sites: source.map((item) => ({
+      ...item,
+      enabled: false,
+      catalog_id: "",
+    })),
+  };
+}
+
+function applyScheduleRule(rule: ScheduleRule) {
+  selectedRuleId.value = rule.id;
+  ruleDraft.value = {
+    name: rule.name,
+    enabled: rule.enabled,
+    time: rule.time,
+    max_jobs: rule.max_jobs,
+    domain_id: rule.domain_id,
+    digest_enabled: rule.digest_enabled,
+    sites: rule.sites.map((item) => ({ ...item })),
+  };
+}
+
+const ruleSelect = computed({
+  get: () => selectedRuleId.value,
+  set: (value: string) => {
+    const target = scheduleRules.value.find((item) => item.id === value);
+    if (target) applyScheduleRule(target);
+  },
+});
+
+function addScheduleRule() {
+  if (savingRule.value) return;
+  selectedRuleId.value = "";
+  ruleDraft.value = newRuleDraft();
+  showRuleDetails.value = true;
+}
+
+function askDeleteScheduleRule() {
+  if (!selectedRuleId.value || savingRule.value) return;
+  const target = scheduleRules.value.find(
+    (item) => item.id === selectedRuleId.value
+  );
+  if (target) deletingRule.value = target;
+}
+
+async function saveScheduleRule() {
+  const draft = ruleDraft.value;
+  if (!draft || savingRule.value) return;
+  savingRule.value = true;
   try {
-    schedule.value = await api.saveSchedule(schedule.value);
+    const saved = selectedRuleId.value
+      ? await api.updateScheduleRule(selectedRuleId.value, draft)
+      : await api.createScheduleRule(draft);
+    const exists = scheduleRules.value.some((item) => item.id === saved.id);
+    scheduleRules.value = exists
+      ? scheduleRules.value.map((item) => (item.id === saved.id ? saved : item))
+      : [...scheduleRules.value, saved];
+    applyScheduleRule(saved);
     toast.success(
-      schedule.value.enabled
-        ? "定时任务已保存。到点会扫描已启用站点，跳过已有任务。"
-        : "已保存。未开启每天定时，启动和后台都不会自动扫描。"
+      saved.enabled
+        ? "配置已保存。到点会扫描这条配置里启用的站点，跳过已有任务。"
+        : "配置已保存。关掉的配置不会自动扫描，需要时点「立即执行这条」。"
     );
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "保存定时任务失败");
+    toast.error(err instanceof Error ? err.message : "保存定时配置失败");
   } finally {
-    savingSchedule.value = false;
+    savingRule.value = false;
   }
 }
 
-async function runScheduleNow() {
+async function confirmDeleteScheduleRule() {
+  const target = deletingRule.value;
+  if (!target || deletingRuleBusy.value) return;
+  deletingRuleBusy.value = true;
+  try {
+    await api.deleteScheduleRule(target.id);
+    const rest = scheduleRules.value.filter((item) => item.id !== target.id);
+    scheduleRules.value = rest;
+    if (rest.length) {
+      applyScheduleRule(rest[0]);
+    } else {
+      selectedRuleId.value = "";
+      ruleDraft.value = newRuleDraft();
+    }
+    toast.success("已删除定时配置");
+    deletingRule.value = null;
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "删除定时配置失败");
+  } finally {
+    deletingRuleBusy.value = false;
+  }
+}
+
+async function runRuleNow() {
+  const target = scheduleRules.value.find(
+    (item) => item.id === selectedRuleId.value
+  );
+  if (!target || runningRuleId.value) return;
+  runningRuleId.value = target.id;
+  try {
+    await pollScheduleRun(
+      () => api.runScheduleRule(target.id),
+      target.name || "定时任务"
+    );
+  } finally {
+    runningRuleId.value = "";
+  }
+}
+
+async function pollScheduleRun(
+  start: () => Promise<ScheduleLog>,
+  label = "定时任务"
+) {
   if (runningSchedule.value) return;
   runningSchedule.value = true;
   runWatching = true;
@@ -476,6 +599,8 @@ async function runScheduleNow() {
     summary: "正在扫描站点…",
     detail: [],
     digest_job_id: "",
+    rule_id: "",
+    rule_name: label,
   };
   scheduleLogs.value = [
     pending,
@@ -483,7 +608,7 @@ async function runScheduleNow() {
   ];
   await nextTick();
   try {
-    let log = await api.runSchedule();
+    let log = await start();
     let logIsNew =
       Boolean(log?.id) && log.id !== PENDING_RUN_ID && !knownIds.has(log.id);
     if (logIsNew) upsertScheduleLog(log);
@@ -512,11 +637,11 @@ async function runScheduleNow() {
       return;
     }
     if (log.status === "failed") {
-      toast.error(log.summary || "定时任务失败");
+      toast.error(log.summary || `${label}失败`);
     } else if (log.status === "partial") {
-      toast.error(log.summary || "部分站点未拉完");
+      toast.error(log.summary || `${label}部分站点未拉完`);
     } else {
-      toast.success(log.summary || "已执行一轮定时任务");
+      toast.success(log.summary || `${label}已执行一轮`);
     }
   } catch (err) {
     scheduleLogs.value = scheduleLogs.value.filter(
@@ -526,6 +651,10 @@ async function runScheduleNow() {
   } finally {
     runningSchedule.value = false;
   }
+}
+
+function runScheduleNow() {
+  return pollScheduleRun(() => api.runSchedule());
 }
 
 function upsertScheduleLog(log: ScheduleLog) {
@@ -1258,27 +1387,67 @@ const highlightPhrasesText = computed({
       <div class="section-title">
         <h3>定时任务</h3>
         <InfoTip label="定时任务说明">
-          每天只拉取当天发布的内容，不会用更早的稿件凑满数量。B 站多个
-          UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
-          app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。需要立刻扫一轮时用「立即执行」。
+          可以建多条配置，每条有自己的时间、站点与内容源，到点各跑各的。每天只拉取当天发布的内容，不会用更早的稿件凑满数量。B
+          站多个 UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
+          app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。
         </InfoTip>
       </div>
-      <label class="check !mb-3">
-        <Checkbox v-model="schedule.enabled" />
-        <span>启用每天定时任务</span>
-      </label>
-      <label class="check !mb-3">
-        <Checkbox v-model="schedule.digest_enabled" />
-        <span>生成汇总总结</span>
-      </label>
       <div class="grid two">
+        <div class="field field-md">
+          <div class="flex items-center gap-1">
+            <Label>定时配置</Label>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="icon-btn disabled:pointer-events-auto disabled:cursor-not-allowed"
+              type="button"
+              aria-label="新增定时配置"
+              title="新增定时配置"
+              :disabled="savingRule"
+              @click="addScheduleRule"
+            >
+              <Plus class="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="icon-btn text-destructive disabled:pointer-events-auto disabled:cursor-not-allowed"
+              type="button"
+              aria-label="删除当前配置"
+              title="删除当前配置"
+              :disabled="savingRule || !selectedRuleId"
+              @click="askDeleteScheduleRule"
+            >
+              <Trash2 class="size-4" />
+            </Button>
+          </div>
+          <Select v-model="ruleSelect">
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem
+                v-for="item in scheduleRules"
+                :key="item.id"
+                :value="item.id"
+                >{{ item.name || "定时配置" }}</SelectItem
+              >
+            </SelectContent>
+          </Select>
+        </div>
+        <div class="field field-md">
+          <Label>配置名称</Label>
+          <Input v-model="ruleDraft.name" placeholder="例如：B站早班" />
+        </div>
+      </div>
+      <div class="grid two mt-3.5">
         <div class="field field-sm">
           <Label>每天几点</Label>
-          <Input v-model="schedule.time" type="time" />
+          <Input v-model="ruleDraft.time" type="time" />
         </div>
         <div class="field field-sm">
           <Label>每次最多新建</Label>
-          <Select v-model="maxJobsSelect">
+          <Select v-model="ruleMaxJobsSelect">
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -1293,53 +1462,95 @@ const highlightPhrasesText = computed({
           </Select>
         </div>
       </div>
-      <div v-if="schedule.sites.length" class="schedule-sites">
-        <div
-          v-for="site in schedule.sites"
-          :key="site.site_id"
-          class="schedule-site"
-        >
-          <label class="check">
-            <Checkbox v-model="site.enabled" />
-            <span>{{ site.name }}</span>
-          </label>
-          <Textarea
-            v-model="site.catalog_id"
-            :placeholder="site.catalog_hint"
-            :aria-label="`${site.name}内容源`"
-            class="schedule-catalog"
-          />
-        </div>
-      </div>
-      <p v-else class="msg mt-3">暂无可定时的站点。</p>
       <div class="row mt-3.5">
         <Button
+          variant="ghost"
           type="button"
-          :disabled="savingSchedule || runningSchedule"
-          @click="saveSchedule"
-          >保存定时</Button
+          class="h-auto px-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+          @click="showRuleDetails = !showRuleDetails"
+        >
+          <ChevronRight
+            class="size-4 transition-transform"
+            :class="{ 'rotate-90': showRuleDetails }"
+          />
+          {{ showRuleDetails ? "收起站点与汇总" : "展开站点与汇总" }}
+        </Button>
+      </div>
+      <div v-show="showRuleDetails">
+        <div class="check-block">
+          <label class="check">
+            <Checkbox v-model="ruleDraft.enabled" />
+            <span>启用这条配置（关掉后不会自动扫描）</span>
+          </label>
+          <label class="check">
+            <Checkbox v-model="ruleDraft.digest_enabled" />
+            <span>生成汇总总结</span>
+          </label>
+        </div>
+        <div v-if="ruleDraft.sites.length" class="schedule-sites">
+          <div
+            v-for="site in ruleDraft.sites"
+            :key="site.site_id"
+            class="schedule-site"
+          >
+            <label class="check">
+              <Checkbox v-model="site.enabled" />
+              <span>{{ site.name }}</span>
+            </label>
+            <Textarea
+              v-model="site.catalog_id"
+              :placeholder="site.catalog_hint"
+              :aria-label="`${site.name}内容源`"
+              class="schedule-catalog"
+            />
+          </div>
+        </div>
+        <p v-else class="msg mt-3">暂无可定时的站点。</p>
+      </div>
+      <div class="row mt-3.5">
+        <Button type="button" :disabled="savingRule" @click="saveScheduleRule"
+          >保存配置</Button
         >
         <Button
           variant="outline"
           type="button"
-          :disabled="runningSchedule"
-          :aria-busy="runningSchedule"
-          @click="runScheduleNow"
+          :disabled="!selectedRuleId || runningRuleId === selectedRuleId"
+          :aria-busy="runningRuleId === selectedRuleId"
+          @click="runRuleNow"
         >
-          <Loader2 v-if="runningSchedule" class="size-4 animate-spin" />
-          {{ runningSchedule ? "正在扫描…" : "立即执行" }}
+          <Loader2
+            v-if="runningRuleId === selectedRuleId"
+            class="size-4 animate-spin"
+          />
+          {{ runningRuleId === selectedRuleId ? "正在扫描…" : "立即执行这条" }}
         </Button>
       </div>
       <div class="schedule-logs">
         <div class="schedule-logs-head">
           <h4>最近运行</h4>
-          <Button
-            variant="outline"
-            type="button"
-            :disabled="!scheduleLogs.length || clearingLogs || runningSchedule"
-            @click="askClearLogs"
-            >清除日志</Button
-          >
+          <div class="row">
+            <Button
+              variant="outline"
+              type="button"
+              :disabled="
+                runningSchedule || !scheduleRules.some((item) => item.enabled)
+              "
+              :aria-busy="runningSchedule"
+              @click="runScheduleNow"
+            >
+              <Loader2 v-if="runningSchedule" class="size-4 animate-spin" />
+              {{ runningSchedule ? "正在扫描…" : "立即执行全部" }}
+            </Button>
+            <Button
+              variant="outline"
+              type="button"
+              :disabled="
+                !scheduleLogs.length || clearingLogs || runningSchedule
+              "
+              @click="askClearLogs"
+              >清除日志</Button
+            >
+          </div>
         </div>
         <div class="schedule-log-list" aria-live="polite">
           <p v-if="!scheduleLogs.length" class="msg">还没有运行记录。</p>
@@ -1355,7 +1566,8 @@ const highlightPhrasesText = computed({
               <div class="schedule-log-head">
                 <strong>{{ formatDateTime(item.started_at) }}</strong>
                 <span
-                  >{{ scheduleTriggerLabel(item.trigger) }} ·
+                  >{{ item.rule_name ? `${item.rule_name} · ` : ""
+                  }}{{ scheduleTriggerLabel(item.trigger) }} ·
                   {{ scheduleStatusLabel(item.status) }}</span
                 >
               </div>
@@ -1602,6 +1814,42 @@ const highlightPhrasesText = computed({
             :disabled="clearingLogs"
             @click="clearScheduleLogs"
             >确认清除</Button
+          >
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog
+      :open="Boolean(deletingRule)"
+      @update:open="
+        (next: boolean) => {
+          if (!next) deletingRule = null;
+        }
+      "
+    >
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>删除定时配置</DialogTitle>
+          <DialogDescription>
+            确定删除「{{
+              deletingRule?.name || "定时配置"
+            }}」？已创建的任务和运行记录都会保留。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="deletingRuleBusy"
+            @click="deletingRule = null"
+            >取消</Button
+          >
+          <Button
+            variant="destructive"
+            type="button"
+            :disabled="deletingRuleBusy"
+            @click="confirmDeleteScheduleRule"
+            >确认删除</Button
           >
         </DialogFooter>
       </DialogContent>

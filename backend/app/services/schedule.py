@@ -10,8 +10,18 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import AppSetting, Job, ScheduleLog, ScheduleSite, Site, stamp_job_start, utcnow
-from app.schemas import ScheduleIn, ScheduleLogOut, ScheduleOut, ScheduleSiteOut
+from app.models import (
+    AppSetting,
+    Job,
+    ScheduleLog,
+    ScheduleRule,
+    ScheduleRuleSite,
+    ScheduleSite,
+    Site,
+    stamp_job_start,
+    utcnow,
+)
+from app.schemas import ScheduleLogOut, ScheduleRuleIn, ScheduleRuleOut, ScheduleRuleSiteOut
 from app.serializers import schedule_log_out
 from app.services.authctx import build_auth
 from app.services.domain import job_domain_id
@@ -45,20 +55,7 @@ _run_lock = threading.Lock()
 _exec_lock = threading.Lock()
 _thread: threading.Thread | None = None
 _startup_checked = False
-_skip_log_day = ""
-
-
-def _setting(db: Session, key: str, default: str = "") -> str:
-    row = db.get(AppSetting, key)
-    return row.value if row else default
-
-
-def _put_setting(db: Session, key: str, value: str) -> None:
-    row = db.get(AppSetting, key)
-    if row is None:
-        db.add(AppSetting(key=key, value=value))
-    else:
-        row.value = value
+_skip_logged: set[tuple[str, str]] = set()
 
 
 def parse_hhmm(value: str) -> tuple[int, int]:
@@ -161,19 +158,53 @@ def _schedulable_sites(db: Session) -> list[Site]:
     return rows
 
 
-def load_schedule(db: Session) -> ScheduleOut:
+def _time_text(value: str) -> str:
     try:
-        hour, minute = parse_hhmm(_setting(db, "schedule_time", DEFAULT_TIME))
-        time_text = format_hhmm(hour, minute)
+        hour, minute = parse_hhmm(value)
     except ValueError:
-        time_text = DEFAULT_TIME
-    domain_id = _setting(db, "schedule_domain_id", "") or job_domain_id("")
-    configs = {row.site_id: row for row in db.query(ScheduleSite).all()}
-    sites: list[ScheduleSiteOut] = []
+        return DEFAULT_TIME
+    return format_hhmm(hour, minute)
+
+
+def _enabled_rules(db: Session) -> list[ScheduleRule]:
+    return (
+        db.query(ScheduleRule)
+        .filter(ScheduleRule.enabled.is_(True))
+        .order_by(ScheduleRule.created_at.asc(), ScheduleRule.id.asc())
+        .all()
+    )
+
+
+def enabled_rule_ids(db: Session) -> list[str]:
+    return [rule.id for rule in _enabled_rules(db)]
+
+
+def _rule_sites(db: Session, rule_id: str) -> dict[str, ScheduleRuleSite]:
+    rows = db.query(ScheduleRuleSite).filter(ScheduleRuleSite.rule_id == rule_id).all()
+    return {row.site_id: row for row in rows}
+
+
+def get_rule(db: Session, rule_id: str) -> ScheduleRule | None:
+    text = (rule_id or "").strip()
+    if not text:
+        return None
+    return db.get(ScheduleRule, text)
+
+
+def _default_rule(db: Session) -> ScheduleRule | None:
+    enabled = _enabled_rules(db)
+    if enabled:
+        return enabled[0]
+    return db.query(ScheduleRule).order_by(ScheduleRule.created_at.asc(), ScheduleRule.id.asc()).first()
+
+
+def rule_out(db: Session, rule: ScheduleRule) -> ScheduleRuleOut:
+    configs = _rule_sites(db, rule.id)
+    sites: list[ScheduleRuleSiteOut] = []
     for site in _schedulable_sites(db):
         row = configs.get(site.id)
         sites.append(
-            ScheduleSiteOut(
+            ScheduleRuleSiteOut(
                 site_id=site.id,
                 name=site.name,
                 adapter=site.adapter,
@@ -182,45 +213,133 @@ def load_schedule(db: Session) -> ScheduleOut:
                 catalog_hint=CATALOG_HINTS.get(site.adapter, ""),
             )
         )
-    return ScheduleOut(
-        enabled=parse_flag(_setting(db, "schedule_enabled", "0"), False),
-        time=time_text,
-        max_jobs=parse_max_jobs(_setting(db, "schedule_max_jobs", str(DEFAULT_MAX_JOBS))),
-        domain_id=domain_id,
-        digest_enabled=parse_flag(_setting(db, "schedule_digest_enabled", "1"), True),
+    return ScheduleRuleOut(
+        id=rule.id,
+        name=rule.name or "",
+        enabled=bool(rule.enabled),
+        time=_time_text(rule.time),
+        max_jobs=parse_max_jobs(rule.max_jobs),
+        domain_id=rule.domain_id or "",
+        digest_enabled=bool(rule.digest_enabled),
         sites=sites,
     )
 
 
-def save_schedule(db: Session, payload: ScheduleIn) -> ScheduleOut:
+def list_rules(db: Session) -> list[ScheduleRuleOut]:
+    rows = db.query(ScheduleRule).order_by(ScheduleRule.created_at.asc(), ScheduleRule.id.asc()).all()
+    return [rule_out(db, row) for row in rows]
+
+
+def list_schedule_sites(db: Session) -> list[ScheduleRuleSiteOut]:
+    """可参与定时的站点清单，供界面新建配置时勾选。"""
+    return [
+        ScheduleRuleSiteOut(
+            site_id=site.id,
+            name=site.name,
+            adapter=site.adapter,
+            enabled=False,
+            catalog_id="",
+            catalog_hint=CATALOG_HINTS.get(site.adapter, ""),
+        )
+        for site in _schedulable_sites(db)
+    ]
+
+
+def save_rule(db: Session, payload: ScheduleRuleIn, rule_id: str | None = None) -> ScheduleRuleOut:
     hour, minute = parse_hhmm(payload.time)
     known = {site.id: site for site in _schedulable_sites(db)}
+    row = get_rule(db, rule_id) if rule_id else None
+    if rule_id and row is None:
+        raise LookupError("定时配置不存在")
+    # 先校验站点与内容源，再落库，避免校验失败留下半成品配置
+    normalized: list[tuple[str, bool, str]] = []
+    seen: set[str] = set()
     for item in payload.sites:
+        if item.site_id in seen:
+            continue
+        seen.add(item.site_id)
         site = known.get(item.site_id)
         if site is None:
             raise ValueError("只能为小鹅通、约牛或 B 站配置定时任务")
         catalog_id = (item.catalog_id or "").strip()
-        ids = split_catalog_ids(catalog_id)
-        if item.enabled and site.adapter in {"xiaoe", "bilibili"} and not ids:
+        if item.enabled and site.adapter in {"xiaoe", "bilibili"} and not split_catalog_ids(catalog_id):
             label = "小鹅通店铺 app_id" if site.adapter == "xiaoe" else "B 站 UP 的 mid"
             raise ValueError(f"{site.name} 已启用定时，请填写{label}，多个可用逗号分隔")
-        row = db.get(ScheduleSite, item.site_id)
-        if row is None:
-            row = ScheduleSite(site_id=item.site_id)
-            db.add(row)
-        row.enabled = bool(item.enabled)
-        row.catalog_id = catalog_id
-    _put_setting(db, "schedule_enabled", "1" if payload.enabled else "0")
-    _put_setting(db, "schedule_time", format_hhmm(hour, minute))
-    _put_setting(db, "schedule_max_jobs", str(parse_max_jobs(payload.max_jobs)))
-    _put_setting(db, "schedule_domain_id", (payload.domain_id or "").strip())
-    _put_setting(db, "schedule_digest_enabled", "1" if payload.digest_enabled else "0")
-    stale_since = db.get(AppSetting, "schedule_since")
-    if stale_since is not None:
-        db.delete(stale_since)
+        normalized.append((item.site_id, bool(item.enabled), catalog_id))
+    if row is None:
+        row = ScheduleRule(name=(payload.name or "").strip() or "定时配置")
+        db.add(row)
+        db.flush()
+    row.name = (payload.name or "").strip() or row.name or "定时配置"
+    row.enabled = bool(payload.enabled)
+    row.time = format_hhmm(hour, minute)
+    row.max_jobs = parse_max_jobs(payload.max_jobs)
+    row.domain_id = (payload.domain_id or "").strip()
+    row.digest_enabled = bool(payload.digest_enabled)
+    current = _rule_sites(db, row.id)
+    for site_id, enabled, catalog_id in normalized:
+        config = current.get(site_id)
+        if config is None:
+            config = ScheduleRuleSite(rule_id=row.id, site_id=site_id)
+            db.add(config)
+        config.enabled = enabled
+        config.catalog_id = catalog_id
+    db.commit()
+    db.refresh(row)
+    wake_scheduler()
+    return rule_out(db, row)
+
+
+def delete_rule(db: Session, rule_id: str) -> dict:
+    row = get_rule(db, rule_id)
+    if row is None:
+        raise LookupError("定时配置不存在")
+    db.query(ScheduleRuleSite).filter(ScheduleRuleSite.rule_id == row.id).delete()
+    db.delete(row)
     db.commit()
     wake_scheduler()
-    return load_schedule(db)
+    return {"ok": True}
+
+
+def migrate_schedule_rules(db: Session) -> None:
+    """旧版只有一套定时配置：升级时搬成一条「默认」配置，并清掉旧的全局设置。"""
+    if db.query(ScheduleRule).count() > 0:
+        return
+    keys = (
+        "schedule_enabled",
+        "schedule_time",
+        "schedule_max_jobs",
+        "schedule_domain_id",
+        "schedule_digest_enabled",
+    )
+    stored = {row.key: row.value for row in db.query(AppSetting).filter(AppSetting.key.in_(keys)).all()}
+    legacy_sites = db.query(ScheduleSite).all()
+    if not stored and not legacy_sites:
+        return
+    rule = ScheduleRule(
+        name="默认",
+        enabled=parse_flag(stored.get("schedule_enabled", "0"), False),
+        time=_time_text(stored.get("schedule_time", DEFAULT_TIME)),
+        max_jobs=parse_max_jobs(stored.get("schedule_max_jobs", str(DEFAULT_MAX_JOBS))),
+        domain_id=stored.get("schedule_domain_id", "") or job_domain_id(""),
+        digest_enabled=parse_flag(stored.get("schedule_digest_enabled", "1"), True),
+    )
+    db.add(rule)
+    db.flush()
+    for item in legacy_sites:
+        db.add(
+            ScheduleRuleSite(
+                rule_id=rule.id,
+                site_id=item.site_id,
+                enabled=bool(item.enabled),
+                catalog_id=item.catalog_id or "",
+            )
+        )
+    for key in (*keys, "schedule_since"):
+        stale = db.get(AppSetting, key)
+        if stale is not None:
+            db.delete(stale)
+    db.commit()
 
 
 def list_logs(db: Session, limit: int = 20) -> list:
@@ -378,7 +497,12 @@ def _build_summary(details: list[dict], created_total: int, skipped_total: int) 
     return text, "ok"
 
 
-def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = None) -> ScheduleLogOut:
+def run_once(
+    trigger: str = "cron",
+    execute: bool = True,
+    db: Session | None = None,
+    rule_id: str | None = None,
+) -> ScheduleLogOut:
     own_session = db is None
     if db is None:
         db = SessionLocal()
@@ -386,22 +510,31 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
     digest_log_id: str | None = None
     try:
         with _run_lock:
-            cfg = load_schedule(db)
-            if trigger != "manual" and not cfg.enabled:
-                raise ValueError("定时任务未启用")
-            if trigger != "manual" and not missed_scheduled_run(db):
-                hour, minute = parse_hhmm(cfg.time)
-                local = shanghai_local()
-                scheduled_today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                if local < scheduled_today:
-                    raise ValueError("未到今天的定时时间")
-                raise ValueError("今日已执行过定时任务")
+            rule = get_rule(db, rule_id) if rule_id else _default_rule(db)
+            if rule is None:
+                raise ValueError("还没有定时配置")
+            if trigger != "manual":
+                if not rule.enabled:
+                    raise ValueError("定时任务未启用")
+                if not missed_scheduled_run(db, rule):
+                    hour, minute = parse_hhmm(rule.time)
+                    local = shanghai_local()
+                    scheduled_today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                    if local < scheduled_today:
+                        raise ValueError("未到今天的定时时间")
+                    raise ValueError("今日已执行过定时任务")
             since = shanghai_today_start()
             today = _shanghai_day(datetime.now(tz=SHANGHAI))
-            remaining = cfg.max_jobs
-            domain_id = job_domain_id(cfg.domain_id)
+            remaining = parse_max_jobs(rule.max_jobs)
+            domain_id = job_domain_id(rule.domain_id)
             existing = _existing_catalog(db)
-            log = ScheduleLog(trigger=trigger, status="running", summary="正在扫描站点")
+            log = ScheduleLog(
+                trigger=trigger,
+                status="running",
+                summary="正在扫描站点",
+                rule_id=rule.id,
+                rule_name=rule.name or "",
+            )
             db.add(log)
             db.commit()
             db.refresh(log)
@@ -409,7 +542,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
             details: list[dict] = []
             created_total = 0
             skipped_total = 0
-            configs = {row.site_id: row for row in db.query(ScheduleSite).all()}
+            configs = _rule_sites(db, rule.id)
             quota_left = remaining > 0
             for site in _schedulable_sites(db):
                 row = configs.get(site.id)
@@ -515,7 +648,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
             db.commit()
             db.refresh(log)
             result = schedule_log_out(log)
-            if cfg.digest_enabled:
+            if rule.digest_enabled:
                 digest_log_id = log.id
     finally:
         if own_session:
@@ -563,11 +696,15 @@ def seconds_until_tick(enabled: bool, time_text: str, now: datetime | None = Non
     return max(1.0, (target - local).total_seconds())
 
 
-def missed_scheduled_run(db: Session, now: datetime | None = None) -> bool:
-    cfg = load_schedule(db)
-    if not cfg.enabled:
+def seconds_until_next_tick(rules: list[ScheduleRule], now: datetime | None = None) -> float:
+    waits = [seconds_until_tick(True, rule.time, now) for rule in rules if rule.enabled]
+    return min(waits) if waits else DISABLED_WAIT
+
+
+def missed_scheduled_run(db: Session, rule: ScheduleRule, now: datetime | None = None) -> bool:
+    if not rule.enabled:
         return False
-    hour, minute = parse_hhmm(cfg.time)
+    hour, minute = parse_hhmm(rule.time)
     local = shanghai_local(now)
     scheduled_today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if local < scheduled_today:
@@ -576,6 +713,7 @@ def missed_scheduled_run(db: Session, now: datetime | None = None) -> bool:
     start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
     row = (
         db.query(ScheduleLog)
+        .filter(ScheduleLog.rule_id == rule.id)
         .filter(ScheduleLog.finished_at.isnot(None))
         .filter(ScheduleLog.status.in_(SCHEDULE_DONE_STATUSES))
         .filter(ScheduleLog.started_at >= start_utc)
@@ -610,16 +748,19 @@ def stop_scheduler() -> None:
 def note_schedule_skip(
     trigger: str,
     summary: str,
+    rule_id: str = "",
+    rule_name: str = "",
     now: datetime | None = None,
     force: bool = False,
 ) -> None:
-    """到点但没执行时也写一条记录，避免只看到一片空白；同一天只留一条。"""
-    global _skip_log_day
-    stamp = naive_utc(shanghai_local(now))
-    day = shanghai_local(now).strftime("%Y-%m-%d")
-    if not force and _skip_log_day == day:
+    """到点但没执行时也写一条记录，避免只看到一片空白；同一天同一条配置只留一条。"""
+    global _skip_logged
+    local = shanghai_local(now)
+    stamp = naive_utc(local)
+    key = (rule_id, local.strftime("%Y-%m-%d"))
+    if not force and key in _skip_logged:
         return
-    _skip_log_day = day
+    _skip_logged.add(key)
     db = SessionLocal()
     try:
         db.add(
@@ -629,6 +770,8 @@ def note_schedule_skip(
                 summary=summary,
                 started_at=stamp,
                 finished_at=stamp,
+                rule_id=rule_id,
+                rule_name=rule_name,
             )
         )
         db.commit()
@@ -638,53 +781,70 @@ def note_schedule_skip(
         db.close()
 
 
-def _safe_run_once(trigger: str) -> None:
+def _safe_run_once(trigger: str, rule_id: str = "") -> None:
     try:
-        run_once(trigger)
+        run_once(trigger, rule_id=rule_id or None)
     except Exception as exc:
-        note_schedule_skip(trigger, f"本轮没有执行：{exc}", force=trigger == "manual")
+        note_schedule_skip(trigger, f"本轮没有执行：{exc}", rule_id=rule_id, force=trigger == "manual")
 
 
-def _run_due_tick(trigger: str = "cron", now: datetime | None = None) -> bool:
-    """到点评估：该扫描就扫描；已执行过或检查失败也写一条留痕，返回是否已处理。"""
-    global _skip_log_day
+def _rule_ids_for_run(db: Session, rule_id: str | None = None) -> list[str]:
+    if rule_id:
+        return [rule_id]
+    return enabled_rule_ids(db)
+
+
+def _run_due_ticks(trigger: str = "cron", now: datetime | None = None) -> list[str]:
+    """到点评估（逐条配置）：该跑就跑，已跑过或检查失败也留痕。"""
+    global _skip_logged
     stamp = shanghai_local(now)
-    note = ""
-    force = False
-    run = False
+    pending: list[str] = []
+    notes: list[tuple[str, str, str, bool]] = []
     db = SessionLocal()
     try:
-        cfg = load_schedule(db)
-        if not cfg.enabled:
-            return False
-        hour, minute = parse_hhmm(cfg.time)
-        if stamp < stamp.replace(hour=hour, minute=minute, second=0, microsecond=0):
-            return False
-        try:
-            due = missed_scheduled_run(db, stamp)
-        except Exception as exc:
-            note = f"检查定时状态失败，本轮未扫描：{exc}"
-            force = True
-        else:
+        for rule in _enabled_rules(db):
+            try:
+                hour, minute = parse_hhmm(rule.time)
+            except ValueError:
+                continue
+            if stamp < stamp.replace(hour=hour, minute=minute, second=0, microsecond=0):
+                continue
+            try:
+                due = missed_scheduled_run(db, rule, stamp)
+            except Exception as exc:
+                notes.append((rule.id, rule.name or "", f"检查定时状态失败，本轮未扫描：{exc}", True))
+                continue
             if due:
-                run = True
+                pending.append(rule.id)
             else:
-                note = "今天已经执行过定时任务，本轮到点不再扫描"
+                notes.append((rule.id, rule.name or "", "今天已经执行过定时任务，本轮到点不再扫描", False))
     except Exception:
-        return False
+        return []
     finally:
         db.close()
-    if note:
-        note_schedule_skip(trigger, note, stamp, force=force)
-    if run:
-        _skip_log_day = ""
-        _safe_run_once(trigger)
-    return run
+    for rule_id, rule_name, summary, force in notes:
+        note_schedule_skip(trigger, summary, rule_id=rule_id, rule_name=rule_name, now=stamp, force=force)
+    for rule_id in pending:
+        _skip_logged = {item for item in _skip_logged if item[0] != rule_id}
+        _safe_run_once(trigger, rule_id)
+    return pending
 
 
-def start_detached_run(trigger: str = "manual") -> ScheduleLogOut:
+def _run_rules_safe(trigger: str, rule_id: str | None = None) -> None:
     db = SessionLocal()
     try:
+        targets = _rule_ids_for_run(db, rule_id)
+    finally:
+        db.close()
+    for target in targets:
+        _safe_run_once(trigger, target)
+
+
+def start_detached_run(trigger: str = "manual", rule_id: str | None = None) -> ScheduleLogOut:
+    db = SessionLocal()
+    try:
+        if not _rule_ids_for_run(db, rule_id):
+            raise RuntimeError("还没有启用的定时配置")
         running = (
             db.query(ScheduleLog)
             .filter(ScheduleLog.finished_at.is_(None))
@@ -702,7 +862,7 @@ def start_detached_run(trigger: str = "manual") -> ScheduleLogOut:
     finally:
         db.close()
 
-    thread = threading.Thread(target=_safe_run_once, args=(trigger,), name="schedule-run", daemon=True)
+    thread = threading.Thread(target=_run_rules_safe, args=(trigger, rule_id), name="schedule-run", daemon=True)
     thread.start()
     deadline = time.time() + 5.0
     while time.time() < deadline:
@@ -736,15 +896,17 @@ def _loop() -> None:
         wait = DISABLED_WAIT
         db: Session | None = SessionLocal()
         try:
-            cfg = load_schedule(db)
+            rules = _enabled_rules(db)
             if not _startup_checked:
                 _startup_checked = True
-                if missed_scheduled_run(db):
+                pending = [rule.id for rule in rules if missed_scheduled_run(db, rule)]
+                if pending:
                     db.close()
                     db = None
-                    _safe_run_once("startup")
+                    for rule_id in pending:
+                        _safe_run_once("startup", rule_id)
                     continue
-            wait = seconds_until_tick(cfg.enabled, cfg.time)
+            wait = seconds_until_next_tick(rules)
         except Exception:
             wait = DISABLED_WAIT
         finally:
@@ -755,4 +917,4 @@ def _loop() -> None:
             break
         if triggered:
             _wake.clear()
-        _run_due_tick("cron")
+        _run_due_ticks("cron")

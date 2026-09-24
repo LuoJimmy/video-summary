@@ -9,7 +9,7 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine, migrate_job_columns
 from app.routers import jobs, knowledge, lexicon, plugins, profiles, schedule, settings as settings_router, sites
 from app.services.seed import seed_defaults
-from app.services.schedule import start_scheduler, stop_scheduler
+from app.services.schedule import migrate_schedule_rules, start_scheduler, stop_scheduler
 from app.services.sensevoice import start_sensevoice_prefetch
 from app.services.settings_store import load_settings, migrate_settings_defaults
 from app.services.sourcetime import backfill_job_source_times
@@ -24,6 +24,7 @@ async def lifespan(_: FastAPI):
     try:
         seed_defaults(db)
         migrate_settings_defaults(db)
+        migrate_schedule_rules(db)
         backfill_job_source_times(db)
         transcribe_model = load_settings(db).transcribe_model
     finally:

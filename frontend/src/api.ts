@@ -266,7 +266,9 @@ export type ScheduleSite = {
   catalog_hint: string;
 };
 
-export type ScheduleConfig = {
+export type ScheduleRule = {
+  id: string;
+  name: string;
   enabled: boolean;
   time: string;
   max_jobs: number;
@@ -274,6 +276,8 @@ export type ScheduleConfig = {
   digest_enabled: boolean;
   sites: ScheduleSite[];
 };
+
+export type ScheduleRuleInput = Omit<ScheduleRule, "id">;
 
 export type ScheduleLogDetail = {
   site_id: string;
@@ -293,6 +297,8 @@ export type ScheduleLog = {
   summary: string;
   detail: ScheduleLogDetail[];
   digest_job_id: string;
+  rule_id: string;
+  rule_name: string;
 };
 
 export type PluginInfo = {
@@ -561,11 +567,23 @@ export const api = {
     request<{ ok: boolean }>(`/api/knowledge/conversations/${id}`, {
       method: "DELETE",
     }),
-  schedule: () => request<ScheduleConfig>("/api/schedule"),
-  saveSchedule: (payload: ScheduleConfig) =>
-    request<ScheduleConfig>("/api/schedule", {
+  scheduleRules: () => request<ScheduleRule[]>("/api/schedule/rules"),
+  scheduleSites: () => request<ScheduleSite[]>("/api/schedule/sites"),
+  createScheduleRule: (payload: ScheduleRuleInput) =>
+    request<ScheduleRule>("/api/schedule/rules", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateScheduleRule: (id: string, payload: ScheduleRuleInput) =>
+    request<ScheduleRule>(`/api/schedule/rules/${id}`, {
       method: "PUT",
       body: JSON.stringify(payload),
+    }),
+  deleteScheduleRule: (id: string) =>
+    request<{ ok: boolean }>(`/api/schedule/rules/${id}`, { method: "DELETE" }),
+  runScheduleRule: (id: string) =>
+    request<ScheduleLog>(`/api/schedule/rules/${id}/run?wait=false`, {
+      method: "POST",
     }),
   runSchedule: () =>
     request<ScheduleLog>("/api/schedule/run?wait=false", { method: "POST" }),

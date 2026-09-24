@@ -93,4 +93,6 @@ def schedule_log_out(row: ScheduleLog) -> ScheduleLogOut:
         summary=row.summary,
         detail=detail,
         digest_job_id=getattr(row, "digest_job_id", "") or "",
+        rule_id=getattr(row, "rule_id", "") or "",
+        rule_name=getattr(row, "rule_name", "") or "",
     )

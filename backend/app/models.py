@@ -55,6 +55,29 @@ class ScheduleSite(Base):
     catalog_id: Mapped[str] = mapped_column(Text, default="")
 
 
+class ScheduleRule(Base):
+    __tablename__ = "schedule_rules"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    time: Mapped[str] = mapped_column(String(5), default="08:00")
+    max_jobs: Mapped[int] = mapped_column(Integer, default=5)
+    domain_id: Mapped[str] = mapped_column(String(32), default="")
+    digest_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class ScheduleRuleSite(Base):
+    __tablename__ = "schedule_rule_sites"
+
+    rule_id: Mapped[str] = mapped_column(ForeignKey("schedule_rules.id"), primary_key=True)
+    site_id: Mapped[str] = mapped_column(ForeignKey("sites.id"), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    catalog_id: Mapped[str] = mapped_column(Text, default="")
+
+
 class ScheduleLog(Base):
     __tablename__ = "schedule_logs"
 
@@ -66,6 +89,8 @@ class ScheduleLog(Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     detail_json: Mapped[str] = mapped_column(Text, default="[]")
     digest_job_id: Mapped[str] = mapped_column(String(32), default="")
+    rule_id: Mapped[str] = mapped_column(String(32), default="")
+    rule_name: Mapped[str] = mapped_column(String(120), default="")
 
 
 class AppSetting(Base):
