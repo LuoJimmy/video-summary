@@ -30,7 +30,7 @@ from app.schemas import (
     ResolvePreview,
 )
 from app.serializers import job_out
-from app.services.authctx import build_auth
+from app.services.authctx import RequestAuth, build_auth
 from app.services.digest import create_digest_from_jobs, is_digest_source
 from app.services.domain import job_domain_id
 from app.services.document import (
@@ -40,8 +40,19 @@ from app.services.document import (
     resolve_preview_file,
     webpage_preview_html,
 )
-from app.services.ingest.base import CatalogError, CATALOG_BATCH_LIMIT, is_document_source, local_source_type
-from app.services.ingest.registry import detect_catalog, list_catalog, resolve_media
+from app.services.ingest.base import (
+    CatalogError,
+    CATALOG_BATCH_LIMIT,
+    CatalogRef,
+    is_document_source,
+    local_source_type,
+)
+from app.services.ingest.registry import (
+    detect_catalog,
+    expand_catalog_short_link,
+    list_catalog,
+    resolve_media,
+)
 from app.services.localfs import LocalFsError, list_dir, media_root_status, scan_dir
 from app.services.pipeline import get_pipeline
 from app.services.media import MediaError, probe_creation_time
@@ -336,16 +347,34 @@ def preview_job_file(
     )
 
 
-def _catalog_preview(payload: JobCreateIn, db: Session) -> ResolvePreview:
-    catalog = detect_catalog(payload.source_url)
+def _detect_catalog_online(url: str, auth: RequestAuth) -> CatalogRef | None:
+    """先按地址形态识别目录；小鹅通 /sl/ 短链再跟随一次跳转确认是店铺还是单条内容。"""
+    catalog = detect_catalog(url)
+    if catalog is not None:
+        return catalog
+    expanded = expand_catalog_short_link(url, auth)
+    if expanded and expanded != url:
+        return detect_catalog(expanded)
+    return None
+
+
+def _catalog_preview(
+    payload: JobCreateIn,
+    db: Session,
+    catalog: CatalogRef | None = None,
+    auth: RequestAuth | None = None,
+) -> ResolvePreview:
+    if auth is None:
+        auth = build_auth(
+            db,
+            url=payload.source_url,
+            site_id=payload.site_id,
+            auth_profile_id=payload.auth_profile_id,
+        )
+    if catalog is None:
+        catalog = _detect_catalog_online(payload.source_url, auth)
     if catalog is None:
         raise HTTPException(400, "不是可展开的空间/店铺/站点地址")
-    auth = build_auth(
-        db,
-        url=payload.source_url,
-        site_id=payload.site_id,
-        auth_profile_id=payload.auth_profile_id,
-    )
     if catalog.adapter and (not auth.adapter or auth.adapter == "generic"):
         auth.adapter = catalog.adapter
     try:
@@ -398,14 +427,15 @@ def _catalog_preview(payload: JobCreateIn, db: Session) -> ResolvePreview:
 def preview_source(payload: JobCreateIn, db: Session = Depends(get_db)) -> ResolvePreview:
     if not payload.source_url.strip() and not payload.media_url_override.strip():
         raise HTTPException(400, "请提供页面地址或媒体地址")
-    if detect_catalog(payload.source_url) is not None:
-        return _catalog_preview(payload, db)
     auth = build_auth(
         db,
         url=payload.source_url,
         site_id=payload.site_id,
         auth_profile_id=payload.auth_profile_id,
     )
+    catalog = _detect_catalog_online(payload.source_url, auth)
+    if catalog is not None:
+        return _catalog_preview(payload, db, catalog=catalog, auth=auth)
     resolved = resolve_media(payload.source_url, auth, media_url_override=payload.media_url_override)
     return ResolvePreview(
         adapter=resolved.adapter,
@@ -420,7 +450,13 @@ def preview_source(payload: JobCreateIn, db: Session = Depends(get_db)) -> Resol
 
 @router.post("/from-catalog", response_model=JobCatalogOut)
 def create_jobs_from_catalog(payload: JobCatalogIn, db: Session = Depends(get_db)) -> JobCatalogOut:
-    catalog = detect_catalog(payload.source_url)
+    auth = build_auth(
+        db,
+        url=payload.source_url,
+        site_id=payload.site_id,
+        auth_profile_id=payload.auth_profile_id,
+    )
+    catalog = _detect_catalog_online(payload.source_url, auth)
     if catalog is None:
         raise HTTPException(400, "不是可展开的空间/店铺/站点地址")
     picks: list[CatalogPreviewItem] = []

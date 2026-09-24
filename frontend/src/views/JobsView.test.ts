@@ -847,6 +847,32 @@ describe("整站目录拉取", () => {
     expect(document.body.textContent).not.toContain("确认拉取");
   });
 
+  it("小鹅通单条短链不弹目录确认框，按单条任务创建", async () => {
+    const el = await mountJobs();
+    vi.mocked(api.preview).mockResolvedValue({
+      adapter: "xiaoe",
+      title: "小鹅通内容",
+      source_type: "page",
+      media_url: "",
+      needs_media_url: false,
+      message: "已跟随短链",
+      catalog: false,
+    });
+    vi.mocked(api.createJob).mockResolvedValue(makeJob({ id: "job-live" }));
+    const textarea = el.querySelector("textarea") as HTMLTextAreaElement;
+    textarea.value = "https://etrsz.xetslk.com/sl/2ojTAg";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    const start = [...el.querySelectorAll("button")].find(
+      (btn) => btn.textContent?.trim() === "开始转写总结"
+    ) as HTMLButtonElement;
+    start.click();
+    await flush();
+    expect(api.preview).toHaveBeenCalled();
+    expect(api.createJob).toHaveBeenCalled();
+    expect(api.fromCatalog).not.toHaveBeenCalled();
+  });
+
   it("空间页拉取等待时按钮显示 loading", async () => {
     const el = await mountJobs();
     let release!: (value: unknown) => void;

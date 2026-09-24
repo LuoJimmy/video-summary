@@ -402,6 +402,49 @@ def test_parse_xiaoe_and_bilibili_catalog_id():
 
 
 @respx.mock
+def test_xiaoe_short_link_to_shop_is_expandable():
+    from app.services.ingest.registry import detect_catalog, expand_catalog_short_link
+
+    respx.get("https://etrsz.xetslk.com/sl/shopAbc").mock(
+        return_value=Response(
+            302, headers={"Location": "https://appdemo.h5.xiaoeknow.com/?app_id=appdemo"}
+        )
+    )
+    respx.get("https://appdemo.h5.xiaoeknow.com/?app_id=appdemo").mock(
+        return_value=Response(200, text="<html></html>")
+    )
+    expanded = expand_catalog_short_link("https://etrsz.xetslk.com/sl/shopAbc", RequestAuth())
+    assert expanded == "https://appdemo.h5.xiaoeknow.com/?app_id=appdemo"
+    ref = detect_catalog(expanded)
+    assert ref is not None
+    assert ref.adapter == "xiaoe"
+    assert ref.catalog_id == "appdemo"
+
+
+@respx.mock
+def test_xiaoe_short_link_to_single_alive_is_not_catalog():
+    import base64
+    import json
+
+    from app.services.ingest.registry import detect_catalog, expand_catalog_short_link
+
+    params = base64.b64encode(
+        json.dumps(
+            {"app_id": "appdtbqcmlu9560", "resource_id": "l_6ab3e1e5e4b023c0862a023d"}
+        ).encode()
+    ).decode()
+    target = f"https://appdtbqcmlu9560.mp.xiaoeknow.com/?app_id=appdtbqcmlu9560&params={params}"
+    respx.get("https://etrsz.xetslk.com/sl/2ojTAg").mock(
+        return_value=Response(302, headers={"Location": target})
+    )
+    respx.get(target).mock(return_value=Response(200, text="<html></html>"))
+
+    expanded = expand_catalog_short_link("https://etrsz.xetslk.com/sl/2ojTAg", RequestAuth())
+    assert expanded.startswith("https://appdtbqcmlu9560.mp.xiaoeknow.com/")
+    assert detect_catalog(expanded) is None
+
+
+@respx.mock
 def test_xiaoe_list_catalog_skips_upcoming():
     from app.services.ingest.xiaoe import XiaoeAdapter
 

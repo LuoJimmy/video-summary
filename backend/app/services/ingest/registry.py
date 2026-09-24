@@ -4,7 +4,11 @@ from app.services.authctx import RequestAuth
 from app.services.ingest.base import CatalogPage, CatalogRef, ResolvedMedia, SiteAdapter
 from app.services.ingest.bilibili import BilibiliAdapter, detect_bilibili_catalog
 from app.services.ingest.generic import GenericAdapter
-from app.services.ingest.xiaoe import XiaoeAdapter, detect_xiaoe_catalog
+from app.services.ingest.xiaoe import (
+    XiaoeAdapter,
+    detect_xiaoe_catalog,
+    expand_xiaoe_short_link,
+)
 from app.services.ingest.yueniu import YueniuAdapter, detect_yueniu_catalog
 
 ADAPTERS: dict[str, SiteAdapter] = {
@@ -43,6 +47,11 @@ def detect_catalog(url: str) -> CatalogRef | None:
     if adapter.name == "yueniu":
         return detect_yueniu_catalog(text)
     return detect_xiaoe_catalog(text) or detect_bilibili_catalog(text) or detect_yueniu_catalog(text)
+
+
+def expand_catalog_short_link(url: str, auth: RequestAuth) -> str:
+    """短链跟随：小鹅通 /sl/ 分享链要先跳转，才能判断是店铺还是单条内容。"""
+    return expand_xiaoe_short_link(url, auth)
 
 
 def list_catalog(

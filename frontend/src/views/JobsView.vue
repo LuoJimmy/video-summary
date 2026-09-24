@@ -575,7 +575,8 @@ async function importCatalog(
   }
   preview.value = listed;
   if (!listed.catalog) {
-    toast.error("不是可展开的空间/店铺/站点地址");
+    // 后端确认不是目录（例如小鹅通单条短链）：创建时按单条任务继续处理
+    if (action !== "create") toast.error("不是可展开的空间/店铺/站点地址");
     return false;
   }
   if (!listed.items?.length) {
@@ -681,14 +682,19 @@ async function createFromUrl() {
   try {
     for (const url of urls) {
       if (isCatalogSourceUrl(url)) {
+        let listed = false;
         try {
-          importedCatalog =
-            (await importCatalog(url, false)) || importedCatalog;
+          listed = await importCatalog(url, false);
         } catch (err) {
           failed += 1;
           toast.error(err instanceof Error ? err.message : "拉取目录失败");
+          continue;
         }
-        continue;
+        if (listed) {
+          importedCatalog = true;
+          continue;
+        }
+        // 地址像目录但后端判定不是（如小鹅通单条短链），继续按单条任务创建
       }
       try {
         created.push(

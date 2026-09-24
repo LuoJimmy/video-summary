@@ -103,4 +103,12 @@ Implementation perfectly matches the final plan.
   * Reason: 任务详情不显示原片时间
   * Blockers: None
   * User Confirmation Status: Pending Confirmation
+* 2026-09-24
+  * Step: 修复小鹅通 /sl/ 短链被误判为非目录地址
+  * Modifications: backend/app/services/ingest/xiaoe.py（新增 `is_xiaoe_short_link` / `expand_xiaoe_short_link`）、backend/app/services/ingest/registry.py（`expand_catalog_short_link`）、backend/app/routers/jobs.py（`_detect_catalog_online`，preview / from-catalog 先跟随短链再判定）、frontend/src/views/JobsView.vue（目录识别失败时回退为单条任务）、backend/tests/test_ingest.py、backend/tests/test_api.py、frontend/src/views/JobsView.test.ts
+  * Change Summary: `xetslk.com/sl/xxx` 短链先跟随跳转，落地址带 resource_id 的按单条任务创建，只带 app_id 的仍按店铺目录展开，不再直接报「不是可展开的空间/店铺/站点地址」
+  * Reason: 用户粘贴 `https://etrsz.xetslk.com/sl/2ojTAg` 时误报；该短链实际指向单场直播（app_id=appdtbqcmlu9560，resource_id=l_6ab3e1e5e4b023c0862a023d）
+  * Blockers: None
+  * User Confirmation Status: Pending Confirmation
+
 

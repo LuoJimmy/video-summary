@@ -33,6 +33,8 @@ XIAOE_HOSTS = (
     "xiaoet.cn",
 )
 ALIVE_PATH_RE = re.compile(r"/course/alive/(l_[A-Za-z0-9]+)", re.I)
+XIAOE_SHORT_HOSTS = ("xetslk.com",)
+XIAOE_SHORT_PATH_RE = re.compile(r"^/sl/[A-Za-z0-9_\-]+", re.I)
 
 
 def parse_xiaoe_ref(url: str) -> tuple[str, str]:
@@ -92,6 +94,33 @@ def parse_xiaoe_catalog_id(catalog_id: str) -> str:
         candidate = "https://" + text
     app_id, _ = parse_xiaoe_ref(candidate)
     return app_id
+
+
+def is_xiaoe_short_link(url: str) -> bool:
+    text = (url or "").strip()
+    if not text:
+        return False
+    parsed = urlparse(text if "://" in text else "https://" + text)
+    host = (parsed.hostname or "").lower()
+    if not any(host == item or host.endswith("." + item) for item in XIAOE_SHORT_HOSTS):
+        return False
+    return bool(XIAOE_SHORT_PATH_RE.match(parsed.path or ""))
+
+
+def expand_xiaoe_short_link(url: str, auth: RequestAuth) -> str:
+    """跟随 /sl/ 分享短链；落地址里才带 app_id / resource_id，可据此区分店铺与单条内容。"""
+    text = (url or "").strip()
+    if not is_xiaoe_short_link(text):
+        return text
+    headers = http_headers(auth)
+    headers.setdefault("Referer", text)
+    try:
+        with http_client(follow_redirects=True, headers=headers) as client:
+            response = client.get(text)
+    except httpx.HTTPError:
+        return text
+    final = str(response.url or "").strip()
+    return final or text
 
 
 XIAOE_LOGIN_HINT = (

@@ -1,6 +1,8 @@
 from datetime import datetime
 from pathlib import Path
 
+import respx
+from httpx import Response
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -460,6 +462,31 @@ def test_preview_marks_xiaoe_short_link_as_existing(client, db_session, monkeypa
     assert by_title["9.10行情梳理"] is True
     assert by_title["9.15行情梳理"] is False
     assert preview["items"][0]["created_at"]
+
+
+@respx.mock
+def test_preview_expands_xiaoe_short_link_to_shop(client, monkeypatch):
+    from app.services.ingest.base import CatalogPage
+
+    respx.get("https://etrsz.xetslk.com/sl/shopAbc").mock(
+        return_value=Response(
+            302, headers={"Location": "https://appdemo.h5.xiaoeknow.com/?app_id=appdemo"}
+        )
+    )
+    respx.get("https://appdemo.h5.xiaoeknow.com/?app_id=appdemo").mock(
+        return_value=Response(200, text="<html></html>")
+    )
+    monkeypatch.setattr(
+        "app.routers.jobs.list_catalog",
+        lambda *args, **kwargs: CatalogPage(items=[]),
+    )
+    preview = client.post(
+        "/api/jobs/preview",
+        json={"source_url": "https://etrsz.xetslk.com/sl/shopAbc"},
+    ).json()
+    assert preview["catalog"] is True
+    assert preview["adapter"] == "xiaoe"
+    assert preview["catalog_label"] == "小鹅通店铺"
 
 
 def test_from_catalog_rejects_non_catalog(client):
