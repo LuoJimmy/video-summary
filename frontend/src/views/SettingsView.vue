@@ -93,7 +93,6 @@ const transcribeSource = ref<"local" | "custom">("local");
 const schedule = ref<ScheduleConfig>({
   enabled: false,
   time: "08:00",
-  since: "",
   max_jobs: 5,
   domain_id: "a-share",
   digest_enabled: true,
@@ -1276,10 +1275,6 @@ const highlightPhrasesText = computed({
         <div class="field field-sm">
           <Label>每天几点</Label>
           <Input v-model="schedule.time" type="time" />
-        </div>
-        <div class="field field-sm">
-          <Label>从哪天开始</Label>
-          <Input v-model="schedule.since" type="date" />
         </div>
         <div class="field field-sm">
           <Label>每次最多新建</Label>

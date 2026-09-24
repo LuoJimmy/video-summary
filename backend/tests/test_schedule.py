@@ -18,13 +18,12 @@ def _sites_by_adapter(client) -> dict:
     return {item["adapter"]: item for item in client.get("/api/sites").json()}
 
 
-def _enable_xiaoe(client, catalog_id="appdemo", max_jobs=5, since="2026-08-01"):
+def _enable_xiaoe(client, catalog_id="appdemo", max_jobs=5):
     sites = _sites_by_adapter(client)
     xiaoe = sites["xiaoe"]
     payload = {
         "enabled": True,
         "time": "08:00",
-        "since": since,
         "max_jobs": max_jobs,
         "domain_id": "a-share",
         "sites": [
@@ -54,7 +53,6 @@ def test_schedule_default_and_validation(client):
         json={
             "enabled": True,
             "time": "08:00",
-            "since": "",
             "max_jobs": 5,
             "sites": [{"site_id": sites["xiaoe"]["id"], "enabled": True, "catalog_id": ""}],
         },
@@ -216,18 +214,16 @@ def test_schedule_skips_xiaoe_short_link_by_title_date(client, db_session, monke
     assert "https://appdemo.h5.xiaoeknow.com/v4/course/alive/l_old?app_id=appdemo" not in urls
 
 
-def test_effective_schedule_since_clamps_to_today():
-    from app.services.schedule import effective_schedule_since, shanghai_today_start
+def test_schedule_window_starts_at_shanghai_today():
+    from app.services.schedule import shanghai_today_start
 
     now = datetime(2026, 9, 16, 18, 0, tzinfo=SHANGHAI)
-    today = shanghai_today_start(now)
-    assert effective_schedule_since("", now) == today
-    assert effective_schedule_since("2026-08-01", now) == today
-    assert effective_schedule_since("2026-09-20", now) > today
+    today = datetime(2026, 9, 16, 0, 0, tzinfo=SHANGHAI).astimezone(timezone.utc)
+    assert shanghai_today_start(now) == today
 
 
-def test_schedule_since_and_max_jobs(client, monkeypatch):
-    _enable_xiaoe(client, max_jobs=1, since="2026-08-13")
+def test_schedule_max_jobs(client, monkeypatch):
+    _enable_xiaoe(client, max_jobs=1)
 
     def fake_list(adapter_name, auth, catalog_id, since=None):
         return [
@@ -256,7 +252,7 @@ def test_schedule_since_and_max_jobs(client, monkeypatch):
 
 
 def test_schedule_only_creates_today_jobs(client, monkeypatch):
-    _enable_xiaoe(client, max_jobs=5, since="2026-08-01")
+    _enable_xiaoe(client, max_jobs=5)
 
     def fake_list(adapter_name, auth, catalog_id, since=None):
         assert since is not None
@@ -289,7 +285,6 @@ def test_schedule_site_error_is_partial(client, monkeypatch):
         json={
             "enabled": True,
             "time": "08:00",
-            "since": "",
             "max_jobs": 5,
             "sites": [
                 {"site_id": sites["xiaoe"]["id"], "enabled": True, "catalog_id": "appdemo"},
@@ -358,7 +353,6 @@ def test_schedule_bilibili_rate_limit_errors_are_deduped(client, monkeypatch):
         json={
             "enabled": True,
             "time": "08:00",
-            "since": "",
             "max_jobs": 5,
             "sites": [
                 {"site_id": sites["xiaoe"]["id"], "enabled": False, "catalog_id": ""},
@@ -389,7 +383,6 @@ def test_schedule_bilibili_stops_remaining_ups_after_rate_limit(client, monkeypa
         json={
             "enabled": True,
             "time": "08:00",
-            "since": "",
             "max_jobs": 5,
             "sites": [
                 {"site_id": sites["xiaoe"]["id"], "enabled": False, "catalog_id": ""},
@@ -422,7 +415,6 @@ def test_schedule_bilibili_keeps_created_jobs_when_later_up_rate_limited(client,
         json={
             "enabled": True,
             "time": "08:00",
-            "since": "",
             "max_jobs": 5,
             "sites": [
                 {"site_id": sites["xiaoe"]["id"], "enabled": False, "catalog_id": ""},
@@ -465,7 +457,6 @@ def test_schedule_hides_rate_limit_when_quota_filled(client, monkeypatch):
         json={
             "enabled": True,
             "time": "08:00",
-            "since": "",
             "max_jobs": 1,
             "sites": [
                 {"site_id": sites["xiaoe"]["id"], "enabled": False, "catalog_id": ""},
@@ -560,7 +551,6 @@ def test_seconds_until_tick_and_missed_run(db_session):
         ScheduleIn(
             enabled=True,
             time="08:00",
-            since="",
             max_jobs=5,
             sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
         ),
@@ -581,7 +571,6 @@ def test_schedule_time_is_shanghai_even_in_utc_process(db_session):
         ScheduleIn(
             enabled=True,
             time="18:01",
-            since="",
             max_jobs=5,
             sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
         ),
@@ -604,7 +593,6 @@ def test_missed_scheduled_run_ignores_skip_log(db_session):
         ScheduleIn(
             enabled=True,
             time="18:01",
-            since="",
             max_jobs=5,
             sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
         ),
@@ -639,7 +627,6 @@ def test_run_due_tick_notes_skip_and_runs_when_due(db_session, monkeypatch):
         ScheduleIn(
             enabled=True,
             time="18:01",
-            since="",
             max_jobs=5,
             sites=[ScheduleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")],
         ),
@@ -688,7 +675,6 @@ def test_cron_does_not_run_when_schedule_disabled(client, db_session, monkeypatc
         json={
             "enabled": False,
             "time": "08:00",
-            "since": "",
             "max_jobs": 5,
             "sites": [
                 {"site_id": sites["xiaoe"]["id"], "enabled": False, "catalog_id": ""},
@@ -796,7 +782,6 @@ def test_schedule_digest_disabled_skips_digest_log(client, monkeypatch):
         json={
             "enabled": True,
             "time": "08:00",
-            "since": "2026-08-01",
             "max_jobs": 5,
             "domain_id": "a-share",
             "digest_enabled": False,

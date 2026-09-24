@@ -396,7 +396,6 @@ class ScheduleSiteIn(BaseModel):
 class ScheduleIn(BaseModel):
     enabled: bool = False
     time: str = "08:00"
-    since: str = ""
     max_jobs: int = 5
     domain_id: str = ""
     digest_enabled: bool = True
@@ -415,7 +414,6 @@ class ScheduleSiteOut(BaseModel):
 class ScheduleOut(BaseModel):
     enabled: bool = False
     time: str = "08:00"
-    since: str = ""
     max_jobs: int = 5
     domain_id: str = ""
     digest_enabled: bool = True

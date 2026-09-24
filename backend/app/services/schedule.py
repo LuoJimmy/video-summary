@@ -84,30 +84,10 @@ def shanghai_local(now: datetime | None = None) -> datetime:
     return stamp.astimezone(SHANGHAI)
 
 
-def parse_since_date(value: str) -> datetime | None:
-    text = (value or "").strip()
-    if not text:
-        return None
-    try:
-        local = datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=SHANGHAI)
-    except ValueError as exc:
-        raise ValueError("起始日期格式应为 YYYY-MM-DD") from exc
-    return local.astimezone(timezone.utc)
-
-
 def shanghai_today_start(now: datetime | None = None) -> datetime:
+    """定时扫描的下限：上海当天 0 点，只拉当天发布的内容。"""
     local = (now or datetime.now(tz=SHANGHAI)).astimezone(SHANGHAI)
     return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-
-
-def effective_schedule_since(since_text: str, now: datetime | None = None) -> datetime:
-    """定时扫描的下限：默认当天 0 点；配置更早则仍只拉当天，更晚则等到那一天。"""
-    today = shanghai_today_start(now)
-    configured = parse_since_date(since_text) if (since_text or "").strip() else None
-    if configured is None:
-        return today
-    stamp = ensure_utc(configured)
-    return stamp if stamp > today else today
 
 
 def _schedule_site_error(
@@ -187,7 +167,6 @@ def load_schedule(db: Session) -> ScheduleOut:
         time_text = format_hhmm(hour, minute)
     except ValueError:
         time_text = DEFAULT_TIME
-    since = _setting(db, "schedule_since", "")
     domain_id = _setting(db, "schedule_domain_id", "") or job_domain_id("")
     configs = {row.site_id: row for row in db.query(ScheduleSite).all()}
     sites: list[ScheduleSiteOut] = []
@@ -206,7 +185,6 @@ def load_schedule(db: Session) -> ScheduleOut:
     return ScheduleOut(
         enabled=parse_flag(_setting(db, "schedule_enabled", "0"), False),
         time=time_text,
-        since=since,
         max_jobs=parse_max_jobs(_setting(db, "schedule_max_jobs", str(DEFAULT_MAX_JOBS))),
         domain_id=domain_id,
         digest_enabled=parse_flag(_setting(db, "schedule_digest_enabled", "1"), True),
@@ -216,9 +194,6 @@ def load_schedule(db: Session) -> ScheduleOut:
 
 def save_schedule(db: Session, payload: ScheduleIn) -> ScheduleOut:
     hour, minute = parse_hhmm(payload.time)
-    since = (payload.since or "").strip()
-    if since:
-        parse_since_date(since)
     known = {site.id: site for site in _schedulable_sites(db)}
     for item in payload.sites:
         site = known.get(item.site_id)
@@ -237,10 +212,12 @@ def save_schedule(db: Session, payload: ScheduleIn) -> ScheduleOut:
         row.catalog_id = catalog_id
     _put_setting(db, "schedule_enabled", "1" if payload.enabled else "0")
     _put_setting(db, "schedule_time", format_hhmm(hour, minute))
-    _put_setting(db, "schedule_since", since)
     _put_setting(db, "schedule_max_jobs", str(parse_max_jobs(payload.max_jobs)))
     _put_setting(db, "schedule_domain_id", (payload.domain_id or "").strip())
     _put_setting(db, "schedule_digest_enabled", "1" if payload.digest_enabled else "0")
+    stale_since = db.get(AppSetting, "schedule_since")
+    if stale_since is not None:
+        db.delete(stale_since)
     db.commit()
     wake_scheduler()
     return load_schedule(db)
@@ -419,7 +396,7 @@ def run_once(trigger: str = "cron", execute: bool = True, db: Session | None = N
                 if local < scheduled_today:
                     raise ValueError("未到今天的定时时间")
                 raise ValueError("今日已执行过定时任务")
-            since = effective_schedule_since(cfg.since)
+            since = shanghai_today_start()
             today = _shanghai_day(datetime.now(tz=SHANGHAI))
             remaining = cfg.max_jobs
             domain_id = job_domain_id(cfg.domain_id)

@@ -269,7 +269,6 @@ export type ScheduleSite = {
 export type ScheduleConfig = {
   enabled: boolean;
   time: string;
-  since: string;
   max_jobs: number;
   domain_id: string;
   digest_enabled: boolean;

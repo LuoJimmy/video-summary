@@ -40,7 +40,6 @@ vi.mock("../api", () => ({
 const sampleSchedule = {
   enabled: false,
   time: "08:00",
-  since: "2026-08-01",
   max_jobs: 5,
   domain_id: "a-share",
   digest_enabled: true,
@@ -333,7 +332,7 @@ describe("设置页模型限制说明", () => {
       el.querySelector(".schedule-digest-link")?.getAttribute("href")
     ).toBe("/jobs/digest-1?from=schedule");
     expect(el.textContent).toContain("小鹅通");
-    expect(el.textContent).toContain("从哪天开始");
+    expect(el.textContent).not.toContain("从哪天开始");
     expect(el.textContent).toContain("立即执行");
     expect(el.textContent).toContain("当天发布");
     expect(el.textContent).toContain("多个 UP");
