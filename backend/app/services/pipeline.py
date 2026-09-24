@@ -7,6 +7,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import Job, utcnow
 from app.schemas import TranscriptSegment
+from app.services.audio_store import archive_job_audio, materialize_job_audio
 from app.services.authctx import build_auth
 from app.services.cancel import JobCancelled, job_scope, raise_if_cancelled
 from app.services.domain import job_pack_scope
@@ -223,7 +224,7 @@ class Pipeline:
                         self._extract_and_maybe_summarize_document(db, job, timer, continue_after=continue_after)
                         return
                     timer = StageTimer()
-                    audio_path = settings.resolve_job_audio_path(job.id, job.audio_path)
+                    audio_path = materialize_job_audio(job.id, job.audio_path)
                     app_settings = load_settings(db)
                     if not audio_path.exists() or audio_path.stat().st_size == 0:
                         timer.start("extracting")
@@ -250,6 +251,7 @@ class Pipeline:
                     raise_if_cancelled()
                     segments = self.transcriber.transcribe(audio_path, app_settings)
                     timer.stop("transcribing")
+                    archive_job_audio(job.id, audio_path)
                     raise_if_cancelled()
                     if not continue_after:
                         self._update(
@@ -500,7 +502,7 @@ class Pipeline:
                 progress=25,
             )
 
-            audio_path = settings.resolve_job_audio_path(job.id, job.audio_path)
+            audio_path = materialize_job_audio(job.id, job.audio_path)
             app_settings = load_settings(db)
             try:
                 max_seconds = int(app_settings.capture_seconds or "0")
@@ -523,6 +525,7 @@ class Pipeline:
 
             segments = self.transcriber.transcribe(audio_path, app_settings)
             timer.stop("transcribing")
+            archive_job_audio(job.id, audio_path)
             raise_if_cancelled()
             self._update(
                 db,

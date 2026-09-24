@@ -17,6 +17,7 @@ import {
   type ScheduleRule,
   type ScheduleRuleInput,
   type ScheduleSite,
+  type StorageUsage,
 } from "../api";
 import { emptyDomainPack, type DomainPack } from "../utils/domain";
 import {
@@ -116,6 +117,9 @@ let runWatching = false;
 const askingClearLogs = ref(false);
 const clearingLogs = ref(false);
 const plugins = ref<PluginInfo[]>([]);
+const storage = ref<StorageUsage | null>(null);
+const cleaningArchive = ref(false);
+const archivingWav = ref(false);
 const pluginBusyId = ref("");
 const askingUninstall = ref(false);
 const uninstallTarget = ref<PluginInfo | null>(null);
@@ -281,6 +285,7 @@ onMounted(async () => {
   await loadLexicon();
   await loadSchedule();
   await loadPlugins();
+  await loadStorage();
 });
 
 onBeforeUnmount(() => {
@@ -399,6 +404,65 @@ async function loadPlugins() {
     syncPluginPoll(plugins.value);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "无法加载插件");
+  }
+}
+
+function formatSize(bytes: number) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${Math.max(0, Math.round(bytes))} B`;
+}
+
+async function loadStorage() {
+  try {
+    storage.value = await api.storageUsage();
+  } catch (err) {
+    storage.value = null;
+    toast.error(err instanceof Error ? err.message : "无法读取存储占用");
+  }
+}
+
+async function cleanupAudioArchive() {
+  if (cleaningArchive.value) return;
+  cleaningArchive.value = true;
+  try {
+    const result = await api.cleanupAudioArchive();
+    storage.value = result.usage;
+    toast.success(
+      result.removed_files
+        ? `已清理 ${result.removed_files} 个音频归档，释放 ${formatSize(
+            result.freed_bytes
+          )}。重新转写时会按原始地址重新抽音。`
+        : "没有可清理的音频归档。"
+    );
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "清理音频归档失败");
+  } finally {
+    cleaningArchive.value = false;
+  }
+}
+
+async function archiveStorageWav() {
+  if (archivingWav.value) return;
+  archivingWav.value = true;
+  try {
+    const result = await api.archiveStorageWav();
+    storage.value = result.usage;
+    const failed = result.failed_files
+      ? `，${result.failed_files} 个压缩失败`
+      : "";
+    toast.success(
+      result.archived_files
+        ? `已把 ${result.archived_files} 个历史音频压成归档，释放 ${formatSize(
+            result.saved_bytes
+          )}${failed}。`
+        : `没有需要压缩的历史音频${failed}。`
+    );
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "压缩历史音频失败");
+  } finally {
+    archivingWav.value = false;
   }
 }
 
@@ -1709,6 +1773,43 @@ const highlightPhrasesText = computed({
               />
             </router-link>
           </Button>
+        </div>
+        <div class="field">
+          <div class="flex items-center gap-1">
+            <Label>音频归档</Label>
+            <InfoTip label="转写说明">
+              转写完成后，抽出的音频会压成 opus 归档（约为 WAV
+              的十分之一），供「重新转写」直接复用。升级前遗留的 WAV
+              可以点「压缩历史音频」一次性转成归档；清理归档只删归档文件，不影响已完成的转写和总结，之后重新转写会按原始地址重新抽音。
+            </InfoTip>
+          </div>
+          <p class="about-version">
+            {{
+              storage
+                ? `${storage.archive_files} 个归档 · ${formatSize(
+                    storage.archive_bytes
+                  )}`
+                : "正在统计…"
+            }}
+          </p>
+          <div class="row">
+            <Button
+              variant="outline"
+              type="button"
+              :disabled="archivingWav || cleaningArchive || !storage?.wav_files"
+              @click="archiveStorageWav"
+              >{{ archivingWav ? "压缩中…" : "压缩历史音频" }}</Button
+            >
+            <Button
+              variant="outline"
+              type="button"
+              :disabled="
+                cleaningArchive || archivingWav || !storage?.archive_files
+              "
+              @click="cleanupAudioArchive"
+              >{{ cleaningArchive ? "清理中…" : "清理音频归档" }}</Button
+            >
+          </div>
         </div>
       </div>
     </section>

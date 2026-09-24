@@ -372,6 +372,33 @@ class PluginOut(BaseModel):
     soffice: str = ""
 
 
+class StorageUsageOut(BaseModel):
+    path: str = ""
+    total_bytes: int = 0
+    wav_bytes: int = 0
+    wav_files: int = 0
+    archive_bytes: int = 0
+    archive_files: int = 0
+    play_bytes: int = 0
+    play_files: int = 0
+    source_bytes: int = 0
+    other_bytes: int = 0
+    orphan_dirs: int = 0
+
+
+class StorageCleanupOut(BaseModel):
+    removed_files: int = 0
+    freed_bytes: int = 0
+    usage: StorageUsageOut = Field(default_factory=StorageUsageOut)
+
+
+class StorageArchiveOut(BaseModel):
+    archived_files: int = 0
+    saved_bytes: int = 0
+    failed_files: int = 0
+    usage: StorageUsageOut = Field(default_factory=StorageUsageOut)
+
+
 class LexiconFix(BaseModel):
     wrong: str = ""
     right: str = ""

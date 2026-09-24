@@ -66,6 +66,7 @@ services:
 5. 在任务详情点击总结时间轴，定位原片或文档段落。
 6. 在「设置 → 定时拉取」建定时配置：可建多条，每条有自己的时间、站点与内容源、每次最多新建的条数、是否生成汇总。小鹅通填店铺 app_id、B 站填 UP mid，多个用逗号或换行分隔；也可在「站点」页再添加一条同类型站点，分别命名。约牛用已有 Cookie 即可。扫描只看当天发布的内容，已拉取过的地址会跳过。
 7. 在「知识库」用已配置的总结模型，基于本机转写和导入文档对话生成答案。扫描件 OCR、旧版 Word 可在「设置 → 文档插件」按需安装。
+8. 转写完成后音频会压成 opus 归档，留在 `DOWNLOAD_DIR` 的任务目录里（约为原始 WAV 的十分之一），「重新转写」直接复用它。升级前遗留的 WAV 可在「设置 → 关于」点「压缩历史音频」一次性转成归档；「清理音频归档」只删归档文件，不影响已完成的转写与总结，之后重新转写会按原始地址重新抽音。
 
 ## 开发
 
@@ -210,7 +211,7 @@ docker run --rm -p 8765:8765 \
 
 也可使用 `ghcr.io/luojimmy/video-summary:latest`。私有仓库拉取前先 `docker login ghcr.io`。
 
-环境变量：`DATA_DIR`（数据库、Whisper 模型、Hugging Face 缓存、文档插件），`DOWNLOAD_DIR`（任务音频和上传文件），`MEDIA_DIR`（「本地任务」可浏览的挂载目录，默认 `/media`），`VIDEO_SUMMARY_DATA` / `VIDEO_SUMMARY_DOWNLOADS` / `VIDEO_SUMMARY_MEDIA`（compose 宿主机路径），`PORT`，`PREFETCH_SENSEVOICE`（默认开启；设为 `0` 可关闭启动时后台预拉 SenseVoice）。
+环境变量：`DATA_DIR`（数据库、Whisper 模型、Hugging Face 缓存、文档插件），`DOWNLOAD_DIR`（任务音频归档、回放缓存和上传文件），`MEDIA_DIR`（「本地任务」可浏览的挂载目录，默认 `/media`），`VIDEO_SUMMARY_DATA` / `VIDEO_SUMMARY_DOWNLOADS` / `VIDEO_SUMMARY_MEDIA`（compose 宿主机路径），`PORT`，`PREFETCH_SENSEVOICE`（默认开启；设为 `0` 可关闭启动时后台预拉 SenseVoice）。
 
 ### 离线镜像包（极空间等）
 

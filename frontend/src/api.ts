@@ -38,6 +38,33 @@ export type AppSettings = {
   domain_presets?: DomainPack[];
 };
 
+export type StorageUsage = {
+  path: string;
+  total_bytes: number;
+  wav_bytes: number;
+  wav_files: number;
+  archive_bytes: number;
+  archive_files: number;
+  play_bytes: number;
+  play_files: number;
+  source_bytes: number;
+  other_bytes: number;
+  orphan_dirs: number;
+};
+
+export type StorageCleanupResult = {
+  removed_files: number;
+  freed_bytes: number;
+  usage: StorageUsage;
+};
+
+export type StorageArchiveResult = {
+  archived_files: number;
+  saved_bytes: number;
+  failed_files: number;
+  usage: StorageUsage;
+};
+
 export type LexiconFix = {
   wrong: string;
   right: string;
@@ -365,6 +392,15 @@ export const api = {
     request<AppSettings>("/api/settings", {
       method: "PUT",
       body: JSON.stringify(payload),
+    }),
+  storageUsage: () => request<StorageUsage>("/api/settings/storage"),
+  cleanupAudioArchive: () =>
+    request<StorageCleanupResult>("/api/settings/storage/cleanup-audio", {
+      method: "POST",
+    }),
+  archiveStorageWav: () =>
+    request<StorageArchiveResult>("/api/settings/storage/archive-wav", {
+      method: "POST",
     }),
   saveDomainPack: (pack: DomainPack) =>
     request<AppSettings>("/api/settings", {

@@ -122,35 +122,46 @@ class FfmpegExtractor(MediaExtractor):
             return self._run(fallback, output_wav)
 
     def _run(self, cmd: list[str], output_wav: Path) -> Path:
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        except OSError as exc:
-            raise MediaError(f"无法启动 ffmpeg：{exc}") from exc
-        register_process(proc)
-        stdout = ""
-        stderr = ""
-        try:
-            while True:
-                raise_if_cancelled()
-                try:
-                    stdout, stderr = proc.communicate(timeout=0.5)
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-        except JobCancelled:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait(timeout=5)
-            raise
-        finally:
-            unregister_process()
-        raise_if_cancelled()
-        if proc.returncode != 0:
-            detail = ((stderr or stdout) or "").strip()[-800:]
-            raise MediaError(f"ffmpeg 抽音失败：{detail}")
-        if not output_wav.exists() or output_wav.stat().st_size == 0:
-            raise MediaError("ffmpeg 未生成有效音频")
-        return output_wav
+        return run_ffmpeg(cmd, output_wav)
+
+
+def run_ffmpeg(
+    cmd: list[str],
+    output: Path,
+    *,
+    label: str = "抽音",
+    empty_message: str = "ffmpeg 未生成有效音频",
+) -> Path:
+    """跑一次 ffmpeg 并校验产物；取消时杀进程，失败文案由 label 决定。"""
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError as exc:
+        raise MediaError(f"无法启动 ffmpeg：{exc}") from exc
+    register_process(proc)
+    stdout = ""
+    stderr = ""
+    try:
+        while True:
+            raise_if_cancelled()
+            try:
+                stdout, stderr = proc.communicate(timeout=0.5)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except JobCancelled:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        raise
+    finally:
+        unregister_process()
+    raise_if_cancelled()
+    if proc.returncode != 0:
+        detail = ((stderr or stdout) or "").strip()[-800:]
+        raise MediaError(f"ffmpeg {label}失败：{detail}")
+    if not output.exists() or output.stat().st_size == 0:
+        raise MediaError(empty_message)
+    return output
 
 
 def probe_creation_time(source: str) -> datetime | None:

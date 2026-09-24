@@ -3,7 +3,13 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toast } from "vue-sonner";
 import { version as appVersion } from "../../package.json";
-import { api, ScheduleLog, type AppSettings, type PluginInfo } from "../api";
+import {
+  api,
+  ScheduleLog,
+  type AppSettings,
+  type PluginInfo,
+  type StorageUsage,
+} from "../api";
 import { emptyDomainPack } from "../utils/domain";
 import SettingsView from "./SettingsView.vue";
 
@@ -38,6 +44,9 @@ vi.mock("../api", () => ({
     installPlugin: vi.fn(),
     cancelPlugin: vi.fn(),
     uninstallPlugin: vi.fn(),
+    storageUsage: vi.fn(),
+    cleanupAudioArchive: vi.fn(),
+    archiveStorageWav: vi.fn(),
   },
 }));
 
@@ -95,6 +104,20 @@ const samplePlugins: PluginInfo[] = [
   },
 ];
 
+const sampleStorage: StorageUsage = {
+  path: "/downloads",
+  total_bytes: 384_436_456,
+  wav_bytes: 96_000_000,
+  wav_files: 3,
+  archive_bytes: 268_435_456,
+  archive_files: 58,
+  play_bytes: 20_000_000,
+  play_files: 12,
+  source_bytes: 1_000,
+  other_bytes: 0,
+  orphan_dirs: 0,
+};
+
 const localSettings: AppSettings = {
   transcribe_base_url: "",
   transcribe_api_key: "",
@@ -136,6 +159,7 @@ async function mountSettings(
   vi.mocked(api.scheduleSites).mockResolvedValue(sampleSites);
   vi.mocked(api.scheduleLogs).mockResolvedValue(logs);
   vi.mocked(api.plugins).mockResolvedValue(plugins);
+  vi.mocked(api.storageUsage).mockResolvedValue(sampleStorage);
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -288,6 +312,55 @@ describe("设置页模型限制说明", () => {
     expect(about?.textContent).toContain("更新日志");
     const changelog = about?.querySelector('a[href="/settings/changelog"]');
     expect(changelog?.textContent).toContain("查看本版本更新");
+    expect(about?.textContent).toContain("音频归档");
+    expect(about?.textContent).toContain("58 个归档");
+    expect(about?.textContent).toContain("256.0 MB");
+  });
+
+  it("手动清理音频归档并刷新占用", async () => {
+    const el = await mountSettings(localSettings);
+    vi.mocked(api.cleanupAudioArchive).mockResolvedValue({
+      removed_files: 58,
+      freed_bytes: 268_435_456,
+      usage: { ...sampleStorage, archive_bytes: 0, archive_files: 0 },
+    });
+    const button = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("清理音频归档")
+    );
+    expect(button).toBeTruthy();
+    button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.cleanupAudioArchive).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining("已清理 58 个音频归档")
+    );
+    expect(el.textContent).toContain("0 个归档");
+  });
+
+  it("压缩历史音频并刷新占用", async () => {
+    const el = await mountSettings(localSettings);
+    vi.mocked(api.archiveStorageWav).mockResolvedValue({
+      archived_files: 3,
+      saved_bytes: 86_000_000,
+      failed_files: 0,
+      usage: {
+        ...sampleStorage,
+        wav_files: 0,
+        wav_bytes: 0,
+        archive_files: 61,
+      },
+    });
+    const button = [...el.querySelectorAll("button")].find((item) =>
+      item.textContent?.includes("压缩历史音频")
+    );
+    expect(button).toBeTruthy();
+    button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.archiveStorageWav).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining("已把 3 个历史音频压成归档")
+    );
+    expect(el.textContent).toContain("61 个归档");
   });
 
   it("从更新日志返回时停留在关于 tab", async () => {
@@ -406,8 +479,7 @@ describe("设置页模型限制说明", () => {
 
   it("立即执行时立刻展示扫描中，完成后写入日志", async () => {
     let finishRun:
-      | ((value:ScheduleLog | PromiseLike<ScheduleLog>) => void)
-      | undefined;
+      ((value: ScheduleLog | PromiseLike<ScheduleLog>) => void) | undefined;
     vi.mocked(api.runSchedule).mockImplementation(
       () =>
         new Promise((resolve) => {
