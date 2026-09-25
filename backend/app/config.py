@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     summarize_concurrency: int = 3
     prefetch_sensevoice: bool = True
     schedule_loop: bool = True
+    # 转写队列：只在后台单线程里一个一个跑，批量创建的任务排队，不会互相抢 CPU。
+    # 关掉后队列工作线程不启动，任务会一直停在「排队中」（测试里用它避免动到真实数据）。
+    job_queue: bool = True
 
     def uploads_path(self) -> Path:
         path = Path(self.download_dir).expanduser() if self.download_dir.strip() else (self.data_dir / "uploads")

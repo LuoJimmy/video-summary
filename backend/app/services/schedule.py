@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.schemas import ScheduleLogOut, ScheduleRuleIn, ScheduleRuleOut, ScheduleRuleSiteOut
 from app.serializers import schedule_log_out
+from app.services import jobqueue
 from app.services.authctx import build_auth
 from app.services.cron import CronError, CronSpec, describe_cron, parse_cron
 from app.services.domain import job_domain_id
@@ -53,7 +54,6 @@ BILI_RATE_LIMIT_KEEP = "后续稿件列表被限流，已保留已拉到的条�
 _stop = threading.Event()
 _wake = threading.Event()
 _run_lock = threading.Lock()
-_exec_lock = threading.Lock()
 _thread: threading.Thread | None = None
 _startup_checked = False
 _skip_logged: set[tuple[str, str]] = set()
@@ -742,13 +742,9 @@ def _run_created_jobs(job_ids: list[str], digest_log_id: str | None = None) -> N
 def _execute_jobs(job_ids: list[str], digest_log_id: str | None = None) -> None:
     if not job_ids:
         return
-
-    def worker() -> None:
-        with _exec_lock:
-            _run_created_jobs(job_ids, digest_log_id=digest_log_id)
-
-    thread = threading.Thread(target=worker, name="schedule-exec", daemon=True)
-    thread.start()
+    # 整批算队列里的一项：同一时刻只有一个任务真正转写，和手动创建的任务共用一条队伍，
+    # 免得两个线程各跑一个任务把 CPU 摊薄。整批跑完再出汇总。
+    jobqueue.enqueue("", lambda: _run_created_jobs(job_ids, digest_log_id=digest_log_id))
 
 
 def seconds_until_tick(enabled: bool, time_text: str, now: datetime | None = None) -> float:

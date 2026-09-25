@@ -30,6 +30,7 @@ from app.schemas import (
     ResolvePreview,
 )
 from app.serializers import job_out
+from app.services import jobqueue
 from app.services.authctx import RequestAuth, build_auth
 from app.services.digest import create_digest_from_jobs, is_digest_source
 from app.services.domain import job_domain_id
@@ -132,7 +133,8 @@ def _jobs_query(
 
 
 def _enqueue(job_id: str) -> None:
-    get_pipeline().run_job(job_id)
+    """排进转写队列：同一时刻只有一个任务真正占用本机转写，避免批量创建时互相抢 CPU。"""
+    jobqueue.enqueue_job(job_id)
 
 
 def _delete_job_files(job_id: str) -> None:
@@ -162,6 +164,7 @@ def _apply_cancel(job: Job) -> None:
             return
         raise HTTPException(400, "当前状态不能取消")
     request_cancel(job.id)
+    jobqueue.forget(job.id)
     job.status = "cancelled"
     job.stage = "cancelled"
     job.error = "已取消"
@@ -181,6 +184,7 @@ def _apply_delete(db: Session, job: Job) -> None:
         request_cancel(job.id)
     else:
         clear_cancel(job.id)
+    jobqueue.forget(job.id)
     _delete_job_files(job.id)
     db.delete(job)
 
@@ -679,7 +683,7 @@ def retranscribe_job(
         job.progress = 50
     db.commit()
     db.refresh(job)
-    background.add_task(get_pipeline().retranscribe_job, job.id, continue_after)
+    background.add_task(jobqueue.enqueue_retranscribe, job.id, continue_after)
     return job_out(job)
 
 

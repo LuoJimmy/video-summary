@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import Base, SessionLocal, engine, migrate_job_columns
 from app.routers import jobs, knowledge, lexicon, plugins, profiles, schedule, settings as settings_router, sites
+from app.services import jobqueue
 from app.services.seed import seed_defaults
 from app.services.schedule import migrate_schedule_rules, start_scheduler, stop_scheduler
 from app.services.sensevoice import start_sensevoice_prefetch
@@ -27,14 +28,19 @@ async def lifespan(_: FastAPI):
         migrate_schedule_rules(db)
         backfill_job_source_times(db)
         transcribe_model = load_settings(db).transcribe_model
+        if settings.job_queue:
+            jobqueue.requeue_pending(db)
     finally:
         db.close()
     start_sensevoice_prefetch(transcribe_model)
+    if settings.job_queue:
+        jobqueue.start_worker()
     if settings.schedule_loop:
         start_scheduler()
     yield
     if settings.schedule_loop:
         stop_scheduler()
+    jobqueue.stop_worker()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
