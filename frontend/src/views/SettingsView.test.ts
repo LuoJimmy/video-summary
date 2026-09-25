@@ -75,6 +75,9 @@ const sampleRule = {
   name: "B站早班",
   enabled: true,
   time: "08:00",
+  cron: "0 8,18 * * *",
+  cron_hint: "每天 8、18 点的 00 分",
+  next_run_at: "2026-09-11T00:00:00Z",
   max_jobs: 5,
   domain_id: "a-share",
   digest_enabled: true,
@@ -440,7 +443,7 @@ describe("设置页模型限制说明", () => {
         finished_at: "2026-09-10T10:00:00Z",
         trigger: "cron",
         status: "skipped",
-        summary: "今天已经执行过定时任务，本轮到点不再扫描",
+        summary: "这个触发点已经执行过定时任务，本轮到点不再扫描",
         detail: [],
         digest_job_id: "",
         rule_id: "rule-1",
@@ -481,6 +484,14 @@ describe("设置页模型限制说明", () => {
     saveRuleBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flush();
     expect(api.updateScheduleRule).toHaveBeenCalledTimes(1);
+
+    const cronInput = el.querySelector(
+      '[aria-label="cron 表达式"]'
+    ) as HTMLInputElement | null;
+    expect(cronInput).toBeTruthy();
+    expect(cronInput?.value).toBe("0 8,18 * * *");
+    expect(el.textContent).toContain("每天 8、18 点的 00 分");
+    expect(el.textContent).toContain("下次运行");
 
     vi.mocked(api.createScheduleRule).mockResolvedValue({
       ...sampleRule,

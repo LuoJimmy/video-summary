@@ -100,6 +100,7 @@ const ruleDraft = ref<ScheduleRuleInput>({
   name: "定时配置 1",
   enabled: true,
   time: "08:00",
+  cron: "",
   max_jobs: 5,
   domain_id: "a-share",
   digest_enabled: true,
@@ -565,6 +566,7 @@ function newRuleDraft(): ScheduleRuleInput {
     name: `定时配置 ${scheduleRules.value.length + 1}`,
     enabled: true,
     time: fallback?.time ?? "08:00",
+    cron: fallback?.cron ?? "",
     max_jobs: fallback?.max_jobs ?? 5,
     domain_id: fallback?.domain_id ?? "a-share",
     digest_enabled: fallback?.digest_enabled ?? true,
@@ -582,12 +584,31 @@ function applyScheduleRule(rule: ScheduleRule) {
     name: rule.name,
     enabled: rule.enabled,
     time: rule.time,
+    cron: rule.cron,
     max_jobs: rule.max_jobs,
     domain_id: rule.domain_id,
     digest_enabled: rule.digest_enabled,
     sites: rule.sites.map((item) => ({ ...item })),
   };
 }
+
+const ruleCronHint = computed(() => {
+  const draft = ruleDraft.value;
+  const cron = (draft?.cron || "").trim();
+  if (!cron) {
+    return "不填 cron 时按上面的「每天几点」每天跑一次。";
+  }
+  const saved = scheduleRules.value.find(
+    (item) => item.id === selectedRuleId.value
+  );
+  if (!saved || saved.cron !== cron || !saved.cron_hint) {
+    return "填好并保存后，这里会显示具体执行时间。";
+  }
+  const next = saved.next_run_at
+    ? `，下次运行 ${formatDateTime(saved.next_run_at)}`
+    : "";
+  return `当前设置：${saved.cron_hint}${next}。`;
+});
 
 const ruleSelect = computed({
   get: () => selectedRuleId.value,
@@ -1485,7 +1506,10 @@ const highlightPhrasesText = computed({
       <div class="section-title">
         <h3>定时任务</h3>
         <InfoTip label="定时任务说明">
-          可以建多条配置，每条有自己的时间、站点与内容源，到点各跑各的。每天只拉取当天发布的内容，不会用更早的稿件凑满数量。B
+          可以建多条配置，每条有自己的时间、站点与内容源，到点各跑各的。除了「每天几点」，还可以直接写
+          cron 表达式（5 段：分 时 日 月 周，例如 0 8,18 * * * 表示一天跑两次、0
+          8 * * 1-5
+          表示只在工作日）。定时扫描只拉取上一次触发之后发布的稿件，不会用更早的稿件凑满数量；手动执行则只看当天发布的内容。B
           站多个 UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
           app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。
         </InfoTip>
@@ -1540,7 +1564,7 @@ const highlightPhrasesText = computed({
       </div>
       <div class="grid two mt-3.5">
         <div class="field field-sm">
-          <Label>每天几点</Label>
+          <Label>每天几点（不填 cron 时生效）</Label>
           <Input v-model="ruleDraft.time" type="time" />
         </div>
         <div class="field field-sm">
@@ -1559,6 +1583,16 @@ const highlightPhrasesText = computed({
             </SelectContent>
           </Select>
         </div>
+      </div>
+      <div class="field mt-3.5">
+        <Label>cron 表达式（可选，填了就以它为准）</Label>
+        <Input
+          v-model="ruleDraft.cron"
+          class="mt-1 field-md"
+          aria-label="cron 表达式"
+          placeholder="例如 0 8,18 * * *（每天 8 点、18 点），0 8 * * 1-5（工作日 8 点）"
+        />
+        <p class="msg mt-1">{{ ruleCronHint }}</p>
       </div>
       <div class="row mt-3.5">
         <Button

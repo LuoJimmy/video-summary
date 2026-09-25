@@ -300,13 +300,19 @@ export type ScheduleRule = {
   name: string;
   enabled: boolean;
   time: string;
+  cron: string;
+  cron_hint: string;
+  next_run_at: string | null;
   max_jobs: number;
   domain_id: string;
   digest_enabled: boolean;
   sites: ScheduleSite[];
 };
 
-export type ScheduleRuleInput = Omit<ScheduleRule, "id">;
+export type ScheduleRuleInput = Omit<
+  ScheduleRule,
+  "id" | "cron_hint" | "next_run_at"
+>;
 
 export type ScheduleLogDetail = {
   site_id: string;

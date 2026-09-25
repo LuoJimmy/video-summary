@@ -426,6 +426,7 @@ class ScheduleRuleIn(BaseModel):
     name: str = ""
     enabled: bool = False
     time: str = "08:00"
+    cron: str = ""
     max_jobs: int = 5
     domain_id: str = ""
     digest_enabled: bool = True
@@ -446,6 +447,9 @@ class ScheduleRuleOut(BaseModel):
     name: str = ""
     enabled: bool = False
     time: str = "08:00"
+    cron: str = ""
+    cron_hint: str = ""
+    next_run_at: datetime | None = None
     max_jobs: int = 5
     domain_id: str = ""
     digest_enabled: bool = True

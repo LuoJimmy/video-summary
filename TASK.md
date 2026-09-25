@@ -135,3 +135,11 @@ Implementation perfectly matches the final plan.
   * Blockers: None
   * User Confirmation Status: Pending Confirmation
 
+* 2026-09-25
+  * Step: 定时任务支持标准 cron 表达式
+  * Modifications: backend/app/services/cron.py（新增：`CronSpec` / `CronError` / `parse_cron` / `describe_cron` / `next_after` / `latest_at_or_before`，纯标准库 5 段解析）、backend/app/models.py（`ScheduleRule.cron` String 120）、backend/app/database.py（老库补 `ALTER TABLE schedule_rules ADD COLUMN cron`）、backend/app/schemas.py（`ScheduleRuleIn.cron`、`ScheduleRuleOut.cron / cron_hint / next_run_at`）、backend/app/services/schedule.py（`rule_cron_text` / `rule_spec` / `rule_trigger_point` / `seconds_until_rule_tick` / `run_scan_since`，重写 `seconds_until_next_tick` / `missed_scheduled_run` / `save_rule` / `_run_due_ticks`）、backend/tests/test_cron.py（新增）、backend/tests/test_schedule.py、frontend/src/api.ts、frontend/src/views/SettingsView.vue、frontend/src/views/SettingsView.test.ts、docs/ARCHITECTURE.md（「定时调度」）、CHANGELOG.md
+  * Change Summary: 定时时间在原来的「每天 HH:MM」之外支持标准 5 段 cron（分 时 日 月 周），解析器自己写（不引依赖）：支持 `*`、区间、步进、列表、月份 / 星期英文缩写，日与星期同时限定时取「或」，`0` 与 `7` 都算周日。接口新增 `cron`（填了以它为准）、`cron_hint`（中文解读）、`next_run_at`（暂停的配置不返回）；旧配置 `cron` 为空时按 `time` 拼出等价的「每天 HH:MM」，不需要数据迁移。去重口径从「同一天一次」改成「同一个触发点一次」，扫描窗口也从「当天 0 点」改成「上一个触发点」，所以 `0 8,18 * * *` 这种一天多次的配置能各跑各的，每周 / 每月的配置也不会漏内容。设置页加了 cron 输入框、中文解读与下次运行时间；旧字段 `time` 保留，填了 cron 时它只当工具里的兜底。后端全量 365 passed，前端 150 passed（仅 `changelog.test.ts` 期望已发布的 `1.3.0` 失败，这个期望在改动前就存在）
+  * Reason: 用户要求「可以设置更灵活的调度时间」，选定标准 5 段 cron 方案：原来只能每天一个固定时刻，跑不了「一天两次」「只工作日」「每周一 / 每月 1 号」这类需求
+  * Blockers: None
+  * User Confirmation Status: Pending Confirmation
+

@@ -62,6 +62,8 @@ class ScheduleRule(Base):
     name: Mapped[str] = mapped_column(String(120), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     time: Mapped[str] = mapped_column(String(5), default="08:00")
+    # 5 段式 cron（分 时 日 月 周）；留空表示按上面的 time 每天跑一次
+    cron: Mapped[str] = mapped_column(String(120), default="")
     max_jobs: Mapped[int] = mapped_column(Integer, default=5)
     domain_id: Mapped[str] = mapped_column(String(32), default="")
     digest_enabled: Mapped[bool] = mapped_column(Boolean, default=True)

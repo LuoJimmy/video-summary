@@ -24,6 +24,7 @@ from app.models import (
 from app.schemas import ScheduleLogOut, ScheduleRuleIn, ScheduleRuleOut, ScheduleRuleSiteOut
 from app.serializers import schedule_log_out
 from app.services.authctx import build_auth
+from app.services.cron import CronError, CronSpec, describe_cron, parse_cron
 from app.services.domain import job_domain_id
 from app.services.ingest.base import CatalogError, CatalogItem
 from app.services.ingest.bilibili import is_bili_rate_limited
@@ -166,6 +167,46 @@ def _time_text(value: str) -> str:
     return format_hhmm(hour, minute)
 
 
+def rule_cron_text(rule: ScheduleRule) -> str:
+    """cron 优先；留空的旧配置按「每天 HH:MM」跑，不需要数据迁移。"""
+    text = (getattr(rule, "cron", "") or "").strip()
+    if text:
+        return text
+    hour, minute = parse_hhmm(_time_text(rule.time))
+    return f"{minute} {hour} * * *"
+
+
+def rule_spec(rule: ScheduleRule) -> CronSpec:
+    return parse_cron(rule_cron_text(rule))
+
+
+def rule_trigger_point(rule: ScheduleRule, now: datetime | None = None) -> datetime | None:
+    """now（含）之前最近的一个触发点，也就是「这一轮本该跑的时刻」。"""
+    return rule_spec(rule).latest_at_or_before(shanghai_local(now))
+
+
+def seconds_until_rule_tick(rule: ScheduleRule, now: datetime | None = None) -> float:
+    """距离这条配置下一次触发还有多少秒；cron 与「每天 HH:MM」统一在这里算。"""
+    local = shanghai_local(now)
+    target = rule_spec(rule).next_after(local)
+    return max(1.0, (target - local).total_seconds())
+
+
+def run_scan_since(rule: ScheduleRule, trigger: str, now: datetime | None = None) -> datetime:
+    """扫描内容的下限：定时触发从上一次触发点算起，每周 / 每月这类低频规则才不会漏内容；
+    手动触发依旧只看当天，跟以前一样。"""
+    if trigger != "manual":
+        try:
+            spec = rule_spec(rule)
+            point = spec.latest_at_or_before(shanghai_local(now))
+            if point is not None:
+                previous = spec.latest_at_or_before(point - timedelta(minutes=1))
+                return (previous or point).astimezone(timezone.utc)
+        except CronError:
+            pass
+    return shanghai_today_start(now)
+
+
 def _enabled_rules(db: Session) -> list[ScheduleRule]:
     return (
         db.query(ScheduleRule)
@@ -213,11 +254,26 @@ def rule_out(db: Session, rule: ScheduleRule) -> ScheduleRuleOut:
                 catalog_hint=CATALOG_HINTS.get(site.adapter, ""),
             )
         )
+    cron_text = (getattr(rule, "cron", "") or "").strip()
+    cron_hint = ""
+    next_run_at = None
+    if cron_text:
+        try:
+            spec = parse_cron(cron_text)
+        except CronError:
+            spec = None
+        if spec is not None:
+            cron_hint = describe_cron(spec)
+            if rule.enabled:
+                next_run_at = naive_utc(spec.next_after(shanghai_local()))
     return ScheduleRuleOut(
         id=rule.id,
         name=rule.name or "",
         enabled=bool(rule.enabled),
         time=_time_text(rule.time),
+        cron=cron_text,
+        cron_hint=cron_hint,
+        next_run_at=next_run_at,
         max_jobs=parse_max_jobs(rule.max_jobs),
         domain_id=rule.domain_id or "",
         digest_enabled=bool(rule.digest_enabled),
@@ -246,7 +302,14 @@ def list_schedule_sites(db: Session) -> list[ScheduleRuleSiteOut]:
 
 
 def save_rule(db: Session, payload: ScheduleRuleIn, rule_id: str | None = None) -> ScheduleRuleOut:
-    hour, minute = parse_hhmm(payload.time)
+    cron_text = (payload.cron or "").strip()
+    if cron_text:
+        # 填了 cron 就以 cron 为准；time 只留给界面当「每天几点」的兜底
+        cron_text = parse_cron(cron_text).text
+        time_text = _time_text(payload.time)
+    else:
+        hour, minute = parse_hhmm(payload.time)
+        time_text = format_hhmm(hour, minute)
     known = {site.id: site for site in _schedulable_sites(db)}
     row = get_rule(db, rule_id) if rule_id else None
     if rule_id and row is None:
@@ -272,7 +335,8 @@ def save_rule(db: Session, payload: ScheduleRuleIn, rule_id: str | None = None) 
         db.flush()
     row.name = (payload.name or "").strip() or row.name or "定时配置"
     row.enabled = bool(payload.enabled)
-    row.time = format_hhmm(hour, minute)
+    row.time = time_text
+    row.cron = cron_text
     row.max_jobs = parse_max_jobs(payload.max_jobs)
     row.domain_id = (payload.domain_id or "").strip()
     row.digest_enabled = bool(payload.digest_enabled)
@@ -517,13 +581,15 @@ def run_once(
                 if not rule.enabled:
                     raise ValueError("定时任务未启用")
                 if not missed_scheduled_run(db, rule):
-                    hour, minute = parse_hhmm(rule.time)
                     local = shanghai_local()
-                    scheduled_today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                    if local < scheduled_today:
+                    try:
+                        point = rule_trigger_point(rule, local)
+                    except CronError:
+                        raise ValueError("定时时间配置有误，请重新保存这条配置") from None
+                    if point is None or point.date() != local.date():
                         raise ValueError("未到今天的定时时间")
-                    raise ValueError("今日已执行过定时任务")
-            since = shanghai_today_start()
+                    raise ValueError("本轮定时任务已经执行过")
+            since = run_scan_since(rule, trigger)
             today = _shanghai_day(datetime.now(tz=SHANGHAI))
             remaining = parse_max_jobs(rule.max_jobs)
             domain_id = job_domain_id(rule.domain_id)
@@ -686,31 +752,32 @@ def _execute_jobs(job_ids: list[str], digest_log_id: str | None = None) -> None:
 
 
 def seconds_until_tick(enabled: bool, time_text: str, now: datetime | None = None) -> float:
+    """「每天 HH:MM」的下一次触发还有多少秒（保留给每天固定时间的配置与测试用）。"""
     if not enabled:
         return DISABLED_WAIT
     hour, minute = parse_hhmm(time_text or DEFAULT_TIME)
     local = shanghai_local(now)
-    target = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if target <= local:
-        target += timedelta(days=1)
+    target = parse_cron(f"{minute} {hour} * * *").next_after(local)
     return max(1.0, (target - local).total_seconds())
 
 
 def seconds_until_next_tick(rules: list[ScheduleRule], now: datetime | None = None) -> float:
-    waits = [seconds_until_tick(True, rule.time, now) for rule in rules if rule.enabled]
+    waits = [seconds_until_rule_tick(rule, now) for rule in rules if rule.enabled]
     return min(waits) if waits else DISABLED_WAIT
 
 
 def missed_scheduled_run(db: Session, rule: ScheduleRule, now: datetime | None = None) -> bool:
+    """这一轮触发点是否还没跑过；今天还没到触发点的一律不算「漏跑」。"""
     if not rule.enabled:
         return False
-    hour, minute = parse_hhmm(rule.time)
     local = shanghai_local(now)
-    scheduled_today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if local < scheduled_today:
+    try:
+        point = rule_trigger_point(rule, local)
+    except CronError:
         return False
-    start_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
-    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    if point is None or point.date() != local.date():
+        return False
+    start_utc = naive_utc(point)
     row = (
         db.query(ScheduleLog)
         .filter(ScheduleLog.rule_id == rule.id)
@@ -804,10 +871,13 @@ def _run_due_ticks(trigger: str = "cron", now: datetime | None = None) -> list[s
     try:
         for rule in _enabled_rules(db):
             try:
-                hour, minute = parse_hhmm(rule.time)
-            except ValueError:
+                point = rule_trigger_point(rule, stamp)
+            except CronError:
+                notes.append(
+                    (rule.id, rule.name or "", "定时时间配置有误，本轮未扫描，请重新保存这条配置", True)
+                )
                 continue
-            if stamp < stamp.replace(hour=hour, minute=minute, second=0, microsecond=0):
+            if point is None or point.date() != stamp.date():
                 continue
             try:
                 due = missed_scheduled_run(db, rule, stamp)
@@ -817,7 +887,7 @@ def _run_due_ticks(trigger: str = "cron", now: datetime | None = None) -> list[s
             if due:
                 pending.append(rule.id)
             else:
-                notes.append((rule.id, rule.name or "", "今天已经执行过定时任务，本轮到点不再扫描", False))
+                notes.append((rule.id, rule.name or "", "这个触发点已经执行过定时任务，本轮到点不再扫描", False))
     except Exception:
         return []
     finally:

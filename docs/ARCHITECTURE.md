@@ -40,6 +40,12 @@ flowchart LR
 
 `jobs` 上的索引都对应真实查询：`status`（任务列表按状态筛选）、`coalesce(source_created_at, created_at)` + `created_at` + `id`（任务列表默认按原片发布时间倒序、日期区间筛选：列顺序要和 SQL 里的 `ORDER BY` 完全对齐，否则 SQLite 会退回「扫表 + 临时排序」）、`created_at` + `id`、`updated_at`（知识库分页）、`domain_id` + `updated_at`（知识库按领域收窄）、`schedule_log_id`（定时汇总反查同批任务）。同一索引名定义变了会在启动时自动 `DROP` 重建，所以调整索引不需要手写数据迁移。加新的过滤或排序条件时，同步在 `JOB_INDEXES` 与 `Job.__table_args__` 两处补索引，别让查询退回全表扫描。
 
+## 定时调度
+
+后台线程在 `app/services/schedule.py`，时间规则存在 `schedule_rules.cron`（标准 5 段 cron：分 时 日 月 周），解析、中文解读与「下一次触发」由 `app/services/cron.py` 算，纯标准库实现，支持 `*`、区间、步进、列表和月份 / 星期的英文缩写，日与星期同时限定时取「或」（跟 cron 一致），`0` 与 `7` 都表示周日。老配置的 `cron` 为空时按 `time` 字段拼出等价的「每天 HH:MM」，所以升级不用动数据。所有判断都在北京时间（`sourcetime.SHANGHAI`）做，库里存 UTC。
+
+是否该跑由 `missed_scheduled_run()` 决定：取「当前时刻（含）之前最近的一个触发点」，再看这个触发点之后（`started_at >= 触发点`）有没有跑完的日志。所以一天跑多次的配置每个触发点各跑一次，进程停机跨过的触发点在当天仍会补跑一次，日志里「已跳过」不算跑过。扫描内容的下限用 `run_scan_since()`：定时触发从上一次触发点算起（每周 / 每月这类低频配置不会漏内容），手动触发仍只看当天 0 点。
+
 ## 知识库检索
 
 检索与问答都在进程内完成，没有向量库：`app/services/knowledge.py` 把每个任务切成标题 / 转写窗口 / 综述 / 章节 / 要点等切片，在「繁简归一化 + 小写」后的文本上做子串打分（整句命中 8 分，词命中 2.5 或 1.2 分），取分最高的若干条当依据。

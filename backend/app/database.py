@@ -94,4 +94,7 @@ def migrate_job_columns() -> None:
             conn.execute(text("ALTER TABLE schedule_logs ADD COLUMN rule_id VARCHAR(32) DEFAULT ''"))
         if log_names and "rule_name" not in log_names:
             conn.execute(text("ALTER TABLE schedule_logs ADD COLUMN rule_name VARCHAR(120) DEFAULT ''"))
+        rule_names = {row[1] for row in conn.execute(text("PRAGMA table_info(schedule_rules)")).fetchall()}
+        if rule_names and "cron" not in rule_names:
+            conn.execute(text("ALTER TABLE schedule_rules ADD COLUMN cron VARCHAR(120) DEFAULT ''"))
         create_job_indexes(conn)

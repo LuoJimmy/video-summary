@@ -623,6 +623,31 @@ def test_seconds_until_next_tick_picks_earliest_rule(db_session):
     assert seconds_until_next_tick([], now) == 3600.0
 
 
+def test_schedule_rule_accepts_cron_expression(client):
+    sites = _sites_by_adapter(client)
+    payload = {
+        "name": "早晚两次",
+        "enabled": True,
+        "time": "08:00",
+        "cron": "0 8,18 * * *",
+        "max_jobs": 5,
+        "domain_id": "a-share",
+        "sites": [{"site_id": sites["xiaoe"]["id"], "enabled": False, "catalog_id": ""}],
+    }
+    created = client.post("/api/schedule/rules", json=payload)
+    assert created.status_code == 200, created.text
+    saved = created.json()
+    assert saved["cron"] == "0 8,18 * * *"
+    assert saved["cron_hint"] == "每天 8、18 点的 00 分"
+    assert saved["next_run_at"]
+
+    bad = client.post("/api/schedule/rules", json={**payload, "cron": "0 8 * *"})
+    assert bad.status_code == 400
+    rules = client.get("/api/schedule/rules").json()
+    assert [item["id"] for item in rules if item["cron"]] == [saved["id"]]
+    assert next(item for item in rules if item["id"] == saved["id"])["cron_hint"]
+
+
 def test_schedule_time_is_shanghai_even_in_utc_process(db_session):
     """容器 / 进程时区是 UTC 时，18:01 仍要按北京时间解释，不能被当成 UTC 18:01。"""
     from app.models import Site
@@ -805,7 +830,7 @@ def test_cron_skips_second_run_the_same_day(client, db_session, monkeypatch):
         run_once("cron", execute=False, db=db_session)
         raise AssertionError("second cron run should skip")
     except ValueError as exc:
-        assert "今日已执行" in str(exc)
+        assert "已经执行过" in str(exc)
     assert db_session.query(ScheduleLog).count() == 1
     assert len(client.get("/api/jobs").json()["items"]) == 1
     manual = client.post("/api/schedule/run").json()
