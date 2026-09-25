@@ -119,3 +119,19 @@ Implementation perfectly matches the final plan.
   * Blockers: None
   * User Confirmation Status: Pending Confirmation
 
+* 2026-09-25
+  * Step: 优化知识库检索的 O(n) 全量扫描
+  * Modifications: backend/app/services/knowledge.py（`_Chunk.score` 换成 `hay`、新增 `MAX_INDEX_JOBS` / `_INDEX_CACHE` / `clear_chunk_index()` / `_index_key()` / `_hay()` / `chunk_index()`、`retrieve()` 改为用切片索引 + 局部打分排序、`_score()` 改为读 `chunk.hay`、`search_knowledge()` 只对命中任务构造 `KnowledgeDoc`）、backend/tests/test_knowledge.py（新增缓存复用 / 转写变更重建 / 标题变更重建 / LRU 淘汰 / 只建命中文档 5 例）、backend/tests/conftest.py（autouse 清理切片索引缓存）、docs/ARCHITECTURE.md（「知识库检索」）、CHANGELOG.md
+  * Change Summary: 每次检索的耗时里约 87% 是 `zhconv` 繁简归一化（本机 83 个任务 / 325 万字真实库：0.39s 里 0.32s），而切片构造与匹配只要 0.07s / 0.003s，且每次提问都从头重算。现在按任务缓存「切片 + 归一化文本」（键含 `updated_at`、正文长度、标题，LRU 上限 200 个任务），缓存命中后只做子串打分；打分结果放在局部变量里不再写回切片对象，避免并发请求互相覆盖；搜索接口也不再为未命中任务构造文档。实测同一库第二次起检索 0.39s → 0.01~0.02s，带关键词搜索 0.43s → 0.03s；首次检索仍需全量建索引（进程内只付一次）
+  * Reason: 知识库列表搜关键词与问答找依据每次都全量重算：83 个任务时单次检索已约 0.4s，任务继续增长会线性变差
+  * Blockers: None
+  * User Confirmation Status: Pending Confirmation
+
+* 2026-09-25
+  * Step: 修正知识库归一化的繁简不一致与「么」误转
+  * Modifications: backend/app/services/textnorm.py（`to_simplified` 迭代到不动点、`_convert_once` 按位还原「么→幺」误转、新增检索键 `match_key`）、backend/app/services/knowledge.py（`_hay` / `retrieve` / `search_knowledge` / `_snippet` 改用 `match_key`）、backend/tests/test_textnorm.py（+3 例）、backend/tests/test_knowledge.py（+2 例：繁体提问、老库「幺」错字）、script/fix-yao-typo.py（历史错字清洗脚本，默认预览）、docs/ARCHITECTURE.md、CHANGELOG.md
+  * Change Summary: 起因是确认「正文已是简体为何还要归一化」，排查发现归一化自身两个既有缺陷：① `zhconv` 单趟转换不幂等——「為什麼半年」→「为什么半年」，而正文里同样的「为什么半年」→「为什幺半年」，繁体提问匹配不到对应正文（整句 8 分匹配丢失，只剩拆词命中）；② `zhconv` 短语表把「么半」类词误转成「幺半」，真实库里已写入 5 处错字（「那幺半年」「什幺证实」「这幺爹」「那幺半导体」）。现在 `to_simplified` 迭代到稳定（输入已是简体就直接返回，实测归一化 0.320s → 0.331s），并只在输出含「幺」时按位还原「输入是么、输出是幺」的位置（真「幺蛾子」保留）；检索键 `match_key` 再统一「幺/么」+ casefold。真实库实测：繁体提问整句命中 0 → 1，简体提问与真「幺蛾子」（61 条）都无退化；另用 `script/fix-yao-typo.py --apply` 清洗了库里 5 处历史错字（已备份 `app.db.bak-*`）。全量 341 passed
+  * Reason: 用户提问「transcript_json 已经是简体，为什么知识库问答还要处理」，核查后确认归一化侧存在漏召回与污染入库文本两个真实缺陷
+  * Blockers: None
+  * User Confirmation Status: Pending Confirmation
+

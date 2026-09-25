@@ -25,6 +25,31 @@ def test_retrieve_matches_question_not_just_exact_phrase():
     assert any("卖票" in item.text for item in hits)
 
 
+def test_retrieve_matches_traditional_question_against_simplified_text():
+    job = Job(
+        id="trad1",
+        title="手機炒股",
+        status="done",
+        transcript_json=dumps([{"id": 0, "start": 0, "end": 10, "text": "为什么半年之后要调整仓位"}]),
+        summary_json=dumps({"title": "倉位", "overview": "講解半年後的倉位調整", "chapters": [], "key_points": []}),
+    )
+    simplified = retrieve([job], "为什么半年", limit=5)
+    traditional = retrieve([job], "為什麼半年", limit=5)
+    assert simplified and traditional
+    assert [item.text for item in simplified] == [item.text for item in traditional]
+
+
+def test_retrieve_matches_legacy_yao_typo_text():
+    job = Job(
+        id="legacy1",
+        title="仓位课",
+        status="done",
+        transcript_json=dumps([{"id": 0, "start": 0, "end": 10, "text": "那幺半年之后要调整仓位"}]),
+    )
+    hits = retrieve([job], "那么半年", limit=5)
+    assert hits and hits[0].job_id == "legacy1"
+
+
 def test_answer_uses_private_context(monkeypatch):
     settings = AppSettingsOut(summarize_api_key="k", summarize_model="demo")
     captured = {}

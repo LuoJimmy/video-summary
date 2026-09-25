@@ -7,6 +7,27 @@ def test_traditional_to_simplified():
     assert to_simplified("") == ""
 
 
+def test_to_simplified_is_stable_across_traditional_and_simplified():
+    assert to_simplified("為什麼半年") == "为什么半年"
+    assert to_simplified("为什么半年") == "为什么半年"
+    converted = to_simplified("為什麼半年你改變自己")
+    assert converted == to_simplified(converted)
+
+
+def test_to_simplified_keeps_real_yao_and_undoes_phrase_typo():
+    assert to_simplified("幺蛾子") == "幺蛾子"
+    assert to_simplified("那么半年") == "那么半年"
+    assert to_simplified("啊，那么半导体。") == "啊，那么半导体。"
+
+
+def test_match_key_absorbs_legacy_yao_typo():
+    from app.services.textnorm import match_key
+
+    assert match_key("那幺半年") == match_key("那么半年")
+    assert match_key("為什麼半年") == match_key("为什么半年")
+    assert match_key("AI 復盤") == "ai 复盘"
+
+
 def test_asr_glossary_fixes_trading_homophones():
     assert "负反馈不会太大" in fix_asr_glossary("只要覆反会不扩大")
     assert "每一次调整都可以参与" in fix_asr_glossary("每一次挑准都可以参与")

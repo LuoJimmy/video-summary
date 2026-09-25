@@ -11,7 +11,7 @@ from app.services.digest import DIGEST_SOURCE_TYPES, is_digest_source
 from app.services.domain import DEFAULT_DOMAIN_ID, knowledge_system, pack_by_id, stored_job_domain
 from app.services.httpclient import create_chat_completion, openai_client
 from app.services.jsonutil import coerce_model_text, loads
-from app.services.textnorm import to_simplified
+from app.services.textnorm import match_key
 
 KIND_LABELS = {
     "title": "标题",
@@ -91,7 +91,7 @@ def search_knowledge(
     page_size: int = 20,
     total: int | None = None,
 ) -> KnowledgeSearchOut:
-    query = to_simplified(query).strip()
+    query = match_key(query).strip()
     page = max(1, int(page or 1))
     page_size = min(100, max(1, int(page_size or 20)))
     if not query:
@@ -134,10 +134,10 @@ def _page_items(items: list, page: int, page_size: int):
 
 
 def retrieve(jobs: list[Job], query: str, limit: int = MAX_CHAT_CHUNKS) -> list[KnowledgeHit]:
-    query = to_simplified(query).strip()
+    query = match_key(query).strip()
     if not query:
         return []
-    lowered = query.casefold()
+    lowered = query
     terms = [term.casefold() for term in _terms(query)]
     ranked: list[tuple[float, _Chunk]] = []
     for job in jobs:
@@ -336,7 +336,7 @@ def _index_key(job: Job) -> tuple:
 
 
 def _hay(chunk: _Chunk) -> str:
-    return to_simplified(f"{chunk.title} {chunk.text}").casefold()
+    return match_key(f"{chunk.title} {chunk.text}")
 
 
 def chunk_index(job: Job) -> list[_Chunk]:
@@ -393,8 +393,8 @@ def _score(chunk: _Chunk, query: str, terms: list[str]) -> float:
 
 
 def _snippet(text: str, query: str, terms: list[str], radius: int = 42) -> str:
-    haystack = to_simplified(text)
-    lowered = haystack.casefold()
+    haystack = match_key(text)
+    lowered = haystack
     index = lowered.find(query.casefold())
     if index < 0:
         for term in sorted(terms, key=len, reverse=True):
