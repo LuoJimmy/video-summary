@@ -1,16 +1,19 @@
-"""uploads 目录的占用统计与手动清理。"""
+"""uploads 目录的占用统计、播放缓存配额与手动清理。"""
 
+import os
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Job
+from app.models import AppSetting, Job
 from app.schemas import StorageArchiveOut, StorageCleanupOut, StorageUsageOut
 from app.services.audio_store import ARCHIVE_NAME, WAV_NAME, archive_job_audio
 
 PLAY_NAME = "play.mp4"
 SOURCE_PREFIX = "source."
+PLAY_QUOTA_KEY = "play_quota_mb"
+MEGABYTE = 1024 * 1024
 
 
 def _files(root: Path) -> list[Path]:
@@ -40,7 +43,7 @@ def _size(path: Path) -> int:
 def storage_usage(db: Session) -> StorageUsageOut:
     root = settings.uploads_path().resolve()
     known = {row[0] for row in db.query(Job.id).all()}
-    usage = StorageUsageOut(path=str(root))
+    usage = StorageUsageOut(path=str(root), play_quota_bytes=play_quota_bytes(db))
     try:
         entries = sorted(root.iterdir())
     except OSError:
@@ -119,3 +122,62 @@ def archive_existing_wavs(db: Session) -> StorageArchiveOut:
         failed_files=failed,
         usage=storage_usage(db),
     )
+
+
+def play_quota_bytes(db: Session) -> int:
+    """设置页填的播放缓存上限（字节）；0 表示不限制。"""
+    from app.services.settings_store import parse_play_quota_mb
+
+    row = db.get(AppSetting, PLAY_QUOTA_KEY)
+    return parse_play_quota_mb(row.value if row else "") * MEGABYTE
+
+
+def play_cache_entries() -> list[tuple[Path, int, float]]:
+    """所有 play.mp4 的（路径, 大小, 最近播放时间）；时间用 mtime/atime 里较新的那个。"""
+    root = settings.uploads_path().resolve()
+    entries: list[tuple[Path, int, float]] = []
+    for path in sorted(root.rglob(PLAY_NAME)):
+        try:
+            path.resolve().relative_to(root)
+            stat = path.stat()
+        except (OSError, ValueError):
+            continue
+        if stat.st_size <= 0:
+            continue
+        entries.append((path, stat.st_size, max(stat.st_mtime, stat.st_atime)))
+    return entries
+
+
+def enforce_play_quota(db: Session, protect_job_id: str = "") -> StorageCleanupOut:
+    """超出上限时按最久未播放的顺序删 play.mp4；未配置上限（0）时什么都不做。"""
+    quota = play_quota_bytes(db)
+    entries = play_cache_entries()
+    total = sum(size for _, size, _ in entries)
+    removed = 0
+    freed = 0
+    if quota > 0 and total > quota:
+        for path, size, _ in sorted(entries, key=lambda item: item[2]):
+            if total <= quota:
+                break
+            if protect_job_id and path.parent.name == protect_job_id:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed += 1
+            freed += size
+            total -= size
+    return StorageCleanupOut(
+        removed_files=removed,
+        freed_bytes=freed,
+        usage=storage_usage(db),
+    )
+
+
+def mark_play_used(path: Path) -> None:
+    """播放命中缓存时刷新时间戳，让 LRU 认得出「最近没看过」。"""
+    try:
+        os.utime(path)
+    except OSError:
+        pass

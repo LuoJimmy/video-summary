@@ -34,6 +34,7 @@ export type AppSettings = {
   cpu_count?: number;
   ai_proofread: boolean;
   show_transcript: boolean;
+  play_quota_mb: number;
   domain_pack?: DomainPack;
   domain_presets?: DomainPack[];
 };
@@ -47,6 +48,7 @@ export type StorageUsage = {
   archive_files: number;
   play_bytes: number;
   play_files: number;
+  play_quota_bytes: number;
   source_bytes: number;
   other_bytes: number;
   orphan_dirs: number;
@@ -392,6 +394,11 @@ export const api = {
     request<AppSettings>("/api/settings", {
       method: "PUT",
       body: JSON.stringify(payload),
+    }),
+  savePlayQuota: (quotaMb: number) =>
+    request<AppSettings>("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ play_quota_mb: quotaMb }),
     }),
   storageUsage: () => request<StorageUsage>("/api/settings/storage"),
   cleanupAudioArchive: () =>

@@ -12,7 +12,12 @@ from app.schemas import (
 )
 from app.services.domain import add_preset, delete_preset
 from app.services.settings_store import load_settings, save_settings
-from app.services.storage import archive_existing_wavs, cleanup_audio_archives, storage_usage
+from app.services.storage import (
+    archive_existing_wavs,
+    cleanup_audio_archives,
+    enforce_play_quota,
+    storage_usage,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -24,7 +29,12 @@ def get_settings(db: Session = Depends(get_db)) -> AppSettingsOut:
 
 @router.put("", response_model=AppSettingsOut)
 def put_settings(payload: AppSettingsIn, db: Session = Depends(get_db)) -> AppSettingsOut:
-    return save_settings(db, payload.model_dump(exclude_unset=True))
+    data = payload.model_dump(exclude_unset=True)
+    saved = save_settings(db, data)
+    if "play_quota_mb" in data:
+        # 改了播放缓存上限就立刻按新上限裁剪，不用等下一次播放
+        enforce_play_quota(db)
+    return saved
 
 
 @router.post("/domain-presets", response_model=AppSettingsOut)

@@ -47,6 +47,7 @@ vi.mock("../api", () => ({
     storageUsage: vi.fn(),
     cleanupAudioArchive: vi.fn(),
     archiveStorageWav: vi.fn(),
+    savePlayQuota: vi.fn(),
   },
 }));
 
@@ -113,6 +114,7 @@ const sampleStorage: StorageUsage = {
   archive_files: 58,
   play_bytes: 20_000_000,
   play_files: 12,
+  play_quota_bytes: 5_368_709_120,
   source_bytes: 1_000,
   other_bytes: 0,
   orphan_dirs: 0,
@@ -132,6 +134,7 @@ const localSettings: AppSettings = {
   cpu_count: 10,
   ai_proofread: true,
   show_transcript: true,
+  play_quota_mb: 0,
 };
 
 let root: HTMLElement | undefined;
@@ -315,6 +318,43 @@ describe("设置页模型限制说明", () => {
     expect(about?.textContent).toContain("音频归档");
     expect(about?.textContent).toContain("58 个归档");
     expect(about?.textContent).toContain("256.0 MB");
+    expect(about?.textContent).toContain("视频存储配额");
+    expect(about?.textContent).toContain(
+      "播放缓存 12 个 · 19.1 MB · 上限 5.00 GB"
+    );
+  });
+
+  it("保存视频存储配额并刷新占用", async () => {
+    const el = await mountSettings(localSettings);
+    vi.mocked(api.savePlayQuota).mockResolvedValue({
+      ...localSettings,
+      play_quota_mb: 512,
+    });
+    vi.mocked(api.storageUsage).mockResolvedValueOnce({
+      ...sampleStorage,
+      play_bytes: 10_000_000,
+      play_quota_bytes: 536_870_912,
+    });
+    const input = el.querySelector<HTMLInputElement>(
+      '#settings-panel-about input[type="number"]'
+    );
+    expect(input).toBeTruthy();
+    if (input) {
+      input.value = "512";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    await flush();
+    const button = [...el.querySelectorAll<HTMLButtonElement>("button")].find(
+      (item) => item.textContent?.trim() === "保存配额"
+    );
+    expect(button).toBeTruthy();
+    button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.savePlayQuota).toHaveBeenCalledWith(512);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining("播放缓存上限已设为 512.0 MB")
+    );
+    expect(el.textContent).toContain("上限 512.0 MB");
   });
 
   it("手动清理音频归档并刷新占用", async () => {
@@ -350,10 +390,11 @@ describe("设置页模型限制说明", () => {
         archive_files: 61,
       },
     });
-    const button = [...el.querySelectorAll("button")].find((item) =>
-      item.textContent?.includes("压缩历史音频")
+    const button = [...el.querySelectorAll<HTMLButtonElement>("button")].find(
+      (item) => item.textContent?.trim() === "压缩历史音频"
     );
     expect(button).toBeTruthy();
+    expect(button?.disabled).toBe(false);
     button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flush();
     expect(api.archiveStorageWav).toHaveBeenCalledTimes(1);

@@ -21,13 +21,26 @@ KEYS = (
     "transcribe_fast",
     "ai_proofread",
     "show_transcript",
+    "play_quota_mb",
 )
 FLAG_KEYS = {"ai_proofread", "show_transcript", "transcribe_fast"}
+MAX_PLAY_QUOTA_MB = 1024 * 1024
 
 
 def _get(db: Session, key: str, default: str = "") -> str:
     row = db.get(AppSetting, key)
     return row.value if row else default
+
+
+def parse_play_quota_mb(value: object, default: int = 0) -> int:
+    """播放缓存上限，单位 MB；0 表示不限制。"""
+    if value is None:
+        return default
+    try:
+        number = int(str(value).strip() or default)
+    except (TypeError, ValueError):
+        number = default
+    return max(0, min(number, MAX_PLAY_QUOTA_MB))
 
 
 def parse_concurrency(value: object, default: int = 3) -> int:
@@ -116,6 +129,7 @@ def load_settings(db: Session) -> AppSettingsOut:
         transcribe_fast=_flag(db, "transcribe_fast", False),
         ai_proofread=_flag(db, "ai_proofread", True),
         show_transcript=_flag(db, "show_transcript", True),
+        play_quota_mb=parse_play_quota_mb(_get(db, "play_quota_mb")),
         cpu_count=cpu_count(),
         domain_pack=load_active_pack(),
         domain_presets=list_presets(),
@@ -135,6 +149,8 @@ def save_settings(db: Session, payload: dict) -> AppSettingsOut:
         elif key in FLAG_KEYS:
             default = False if key == "transcribe_fast" else True
             value = _flag_text(payload[key], default)
+        elif key == "play_quota_mb":
+            value = str(parse_play_quota_mb(payload[key]))
         else:
             value = payload[key] or ""
         row = db.get(AppSetting, key)

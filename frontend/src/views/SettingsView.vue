@@ -79,6 +79,7 @@ const form = ref<AppSettings>({
   cpu_count: 1,
   ai_proofread: true,
   show_transcript: true,
+  play_quota_mb: 0,
   domain_pack: emptyDomainPack(),
   domain_presets: [],
 });
@@ -120,6 +121,8 @@ const plugins = ref<PluginInfo[]>([]);
 const storage = ref<StorageUsage | null>(null);
 const cleaningArchive = ref(false);
 const archivingWav = ref(false);
+const playQuotaMb = ref<number | string>(0);
+const savingPlayQuota = ref(false);
 const pluginBusyId = ref("");
 const askingUninstall = ref(false);
 const uninstallTarget = ref<PluginInfo | null>(null);
@@ -286,6 +289,7 @@ onMounted(async () => {
   await loadSchedule();
   await loadPlugins();
   await loadStorage();
+  syncPlayQuota();
 });
 
 onBeforeUnmount(() => {
@@ -463,6 +467,36 @@ async function archiveStorageWav() {
     toast.error(err instanceof Error ? err.message : "压缩历史音频失败");
   } finally {
     archivingWav.value = false;
+  }
+}
+
+function syncPlayQuota() {
+  playQuotaMb.value = Math.max(0, Number(form.value.play_quota_mb) || 0);
+}
+
+async function savePlayQuota() {
+  if (savingPlayQuota.value) return;
+  const mb = Math.max(0, Math.floor(Number(playQuotaMb.value) || 0));
+  playQuotaMb.value = mb;
+  savingPlayQuota.value = true;
+  const before = storage.value?.play_bytes ?? 0;
+  try {
+    const saved = await api.savePlayQuota(mb);
+    form.value.play_quota_mb = saved.play_quota_mb;
+    playQuotaMb.value = saved.play_quota_mb;
+    await loadStorage();
+    const freed = Math.max(0, before - (storage.value?.play_bytes ?? 0));
+    const trimmed =
+      freed > 0 ? `，已清理 ${formatSize(freed)} 最久未播放的缓存` : "";
+    toast.success(
+      mb > 0
+        ? `播放缓存上限已设为 ${formatSize(mb * 1024 * 1024)}${trimmed}。`
+        : "已取消播放缓存上限，不再自动清理。"
+    );
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "保存视频存储配额失败");
+  } finally {
+    savingPlayQuota.value = false;
   }
 }
 
@@ -1808,6 +1842,47 @@ const highlightPhrasesText = computed({
               "
               @click="cleanupAudioArchive"
               >{{ cleaningArchive ? "清理中…" : "清理音频归档" }}</Button
+            >
+          </div>
+        </div>
+        <div class="field">
+          <div class="flex items-center gap-1">
+            <Label>视频存储配额（MB）</Label>
+            <InfoTip label="播放缓存说明">
+              播放时缓存的 play.mp4
+              会留在任务目录里。填上限后，超出部分会按「最久没播放」的顺序自动删除（正在播放的那个不会删）；留空或
+              0 表示不限制，默认不限制。
+            </InfoTip>
+          </div>
+          <p class="about-version">
+            {{
+              storage
+                ? `播放缓存 ${storage.play_files} 个 · ${formatSize(
+                    storage.play_bytes
+                  )} · ${
+                    storage.play_quota_bytes > 0
+                      ? `上限 ${formatSize(storage.play_quota_bytes)}`
+                      : "未限制"
+                  }`
+                : "正在统计…"
+            }}
+          </p>
+          <div class="row">
+            <Input
+              v-model="playQuotaMb"
+              type="number"
+              min="0"
+              step="512"
+              class="w-40"
+              placeholder="留空不限制"
+              @keyup.enter="savePlayQuota"
+            />
+            <Button
+              variant="outline"
+              type="button"
+              :disabled="savingPlayQuota"
+              @click="savePlayQuota"
+              >{{ savingPlayQuota ? "保存中…" : "保存配额" }}</Button
             >
           </div>
         </div>

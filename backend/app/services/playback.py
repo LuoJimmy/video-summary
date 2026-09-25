@@ -10,6 +10,7 @@ from app.services.authctx import build_auth
 from app.services.ingest.base import ResolvedMedia
 from app.services.ingest.registry import pick_adapter, resolve_media
 from app.services.media import MediaError, remux_to_mp4
+from app.services.storage import enforce_play_quota, mark_play_used
 
 REFRESH_ADAPTERS = {"xiaoe", "yueniu", "bilibili"}
 SIGN_KEYS = {"sign", "t", "token", "us", "auth_key", "txsecret", "pm3u8"}
@@ -128,6 +129,7 @@ def ensure_play_file(db: Session, job: Job) -> Path:
     with lock:
         cached = cached_play_file(job.id)
         if cached is not None:
+            mark_play_used(cached)
             return cached
         local = local_video_file(job)
         if local is not None and local.suffix.lower() in BROWSER_VIDEO_EXTS:
@@ -153,11 +155,15 @@ def ensure_play_file(db: Session, job: Job) -> Path:
             raise MediaError(resolved.message or "没有可播放的视频地址")
         dest = settings.job_workdir(job.id) / "play.mp4"
         try:
-            return remux_to_mp4(sources, dest, extra_headers=resolved.headers)
+            path = remux_to_mp4(sources, dest, extra_headers=resolved.headers)
         except MediaError:
             if len(sources) > 1:
-                return remux_to_mp4([sources[0]], dest, extra_headers=resolved.headers)
-            raise
+                path = remux_to_mp4([sources[0]], dest, extra_headers=resolved.headers)
+            else:
+                raise
+        # 按设置里的上限裁掉最久未播放的缓存；当前任务刚生成，不会被动到
+        enforce_play_quota(db, protect_job_id=job.id)
+        return path
 
 
 def _job_play_lock(job_id: str) -> Lock:

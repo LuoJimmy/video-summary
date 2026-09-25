@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from app.models import Job, Site
@@ -190,6 +191,25 @@ def test_ensure_play_file_uses_cached_mp4(db_session, tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.playback.cached_play_file", lambda _job_id: cached)
     path = ensure_play_file(db_session, job)
     assert path == cached
+
+
+def test_ensure_play_file_marks_cache_as_used(db_session, tmp_path, monkeypatch):
+    job = Job(
+        title="B站课",
+        source_url="https://www.bilibili.com/video/BV1a4awzsENn",
+        media_url="https://upos.example.com/a.m4s",
+        status="done",
+    )
+    db_session.add(job)
+    db_session.commit()
+    cached = tmp_path / "play.mp4"
+    cached.write_bytes(b"cached")
+    os.utime(cached, (1_000_000, 1_000_000))
+    monkeypatch.setattr("app.services.playback.cached_play_file", lambda _job_id: cached)
+
+    ensure_play_file(db_session, job)
+
+    assert cached.stat().st_mtime > 1_000_000
 
 
 def test_browser_playback_url_keeps_hls():

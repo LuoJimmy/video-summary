@@ -81,6 +81,7 @@ class AppSettingsIn(BaseModel):
     transcribe_fast: bool = False
     ai_proofread: bool = True
     show_transcript: bool = True
+    play_quota_mb: int = 0
     domain_pack: DomainPack | None = None
 
 
@@ -381,6 +382,7 @@ class StorageUsageOut(BaseModel):
     archive_files: int = 0
     play_bytes: int = 0
     play_files: int = 0
+    play_quota_bytes: int = 0
     source_bytes: int = 0
     other_bytes: int = 0
     orphan_dirs: int = 0

@@ -13,6 +13,7 @@
 - 任务标题和视频作者可以一起改：任务列表和任务详情都把原来的「编辑标题」换成「编辑」，点开弹窗同时改标题与作者，保存后列表、详情立刻生效
 - 转写完的音频改成 opus 归档：转写完成后抽出的 16kHz WAV 会压成 opus（约 WAV 的十分之一，1 小时视频约 115MB → 约 11MB）留在任务目录，重新转写时自动解回 WAV，不用重新下载原始地址
 - 设置页「关于」新增音频归档占用、「压缩历史音频」与「清理音频归档」按钮（`GET /api/settings/storage`、`POST /api/settings/storage/archive-wav`、`POST /api/settings/storage/cleanup-audio`）
+- 设置页「关于」新增「视频存储配额」：播放缓存（`play.mp4`）超过上限后按「最久没播放」自动删除，正在播放的那份不删；留空或 0 表示不限制，默认不限制（`PUT /api/settings` 传 `play_quota_mb`（MB），`GET /api/settings/storage` 返回 `play_quota_bytes`）
 
 ### 修复
 

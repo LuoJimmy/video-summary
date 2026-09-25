@@ -20,7 +20,7 @@ flowchart LR
 ## 分层
 
 1. 接入层：`generic` / `xiaoe` / `yueniu` / `bilibili` 识别 URL。音视频提取或接收媒体地址；generic 下的普通网页和 PDF/Word 等走文档分支。B 站走公开稿件接口取 DASH 音轨。
-2. 媒体层：FFmpeg 把文件或 HLS 抽成 16kHz 单声道 WAV。转写完成后同一份 WAV 会压成 opus 归档（`app/services/audio_store.py`，约 WAV 的十分之一），任务目录里只留归档；「重新转写」时先解回 WAV 再交给转写器，因此不依赖原始地址是否仍然有效。设置页「关于」可以查看归档占用并手动清理。
+2. 媒体层：FFmpeg 把文件或 HLS 抽成 16kHz 单声道 WAV。转写完成后同一份 WAV 会压成 opus 归档（`app/services/audio_store.py`，约 WAV 的十分之一），任务目录里只留归档；「重新转写」时先解回 WAV 再交给转写器，因此不依赖原始地址是否仍然有效。设置页「关于」可以查看归档占用并手动清理。播放时另会在任务目录缓存 `play.mp4`，缓存总量超上限时按「最久没播放」淘汰（`app/services/storage.py` 的 `enforce_play_quota`），上限存在设置表 `play_quota_mb` 里，为 0 表示不限制。
 3. 文档层：`pymupdf` / `python-docx` / `trafilatura` 抽正文。扫描 PDF、旧版 `.doc` 为 `DATA_DIR/plugins` 里的按需插件（RapidOCR、LibreOffice）。
 4. 转写层：兼容 `/v1/audio/transcriptions` 的 `verbose_json` 分段。文档把段落写成同样的 `TranscriptSegment`，带 `locator`。
 5. 总结层：音视频默认总结；文档默认直接入库原文，勾选后才调用模型。模型只输出分段编号；`timeline.attach_timestamps` 映射秒数或页/段 locator。

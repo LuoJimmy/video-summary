@@ -1,7 +1,10 @@
+import os
+
 from app.config import settings as app_settings
-from app.models import Job
+from app.models import AppSetting, Job
 from app.services.audio_store import ARCHIVE_NAME, WAV_NAME
 from app.services.media import MediaError
+from app.services.storage import enforce_play_quota
 
 
 def _write(path, size: int = 16) -> None:
@@ -108,3 +111,76 @@ def test_archive_wav_endpoint_keeps_wav_on_failure(client, db_session, tmp_path,
     assert payload["saved_bytes"] == 0
     assert payload["usage"]["wav_files"] == 1
     assert wav.exists()
+
+
+def test_play_quota_unset_keeps_play_cache(client, db_session, tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    job = Job(title="默认不限制", status="done")
+    db_session.add(job)
+    db_session.commit()
+    play = app_settings.job_workdir(job.id) / "play.mp4"
+    _write(play, 3 * 1024 * 1024)
+
+    payload = client.get("/api/settings/storage").json()
+    assert payload["play_quota_bytes"] == 0
+    assert payload["play_bytes"] == 3 * 1024 * 1024
+    assert play.exists()
+
+
+def test_play_quota_endpoint_removes_oldest_play_cache(client, db_session, tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    jobs = [Job(title=f"缓存 {index}", status="done") for index in range(3)]
+    db_session.add_all(jobs)
+    db_session.commit()
+    files = []
+    for index, job in enumerate(jobs):
+        path = app_settings.job_workdir(job.id) / "play.mp4"
+        _write(path, 1024 * 1024)
+        stamp = 1_000_000 + index
+        os.utime(path, (stamp, stamp))
+        files.append(path)
+
+    response = client.put("/api/settings", json={"play_quota_mb": 2})
+    assert response.status_code == 200
+    assert response.json()["play_quota_mb"] == 2
+    assert not files[0].exists()
+    assert files[1].exists()
+    assert files[2].exists()
+    payload = client.get("/api/settings/storage").json()
+    assert payload["play_files"] == 2
+    assert payload["play_quota_bytes"] == 2 * 1024 * 1024
+
+
+def test_enforce_play_quota_keeps_the_file_being_played(db_session, tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    jobs = [Job(title=f"缓存 {index}", status="done") for index in range(3)]
+    db_session.add_all(jobs)
+    db_session.commit()
+    files = []
+    for index, job in enumerate(jobs):
+        path = app_settings.job_workdir(job.id) / "play.mp4"
+        _write(path, 1024 * 1024)
+        stamp = 1_000_000 + index
+        os.utime(path, (stamp, stamp))
+        files.append(path)
+    db_session.add(AppSetting(key="play_quota_mb", value="1"))
+    db_session.commit()
+
+    enforce_play_quota(db_session, protect_job_id=jobs[0].id)
+
+    assert files[0].exists()
+    assert not files[1].exists()
+    assert not files[2].exists()
+
+
+def test_play_quota_ignores_negative_value(client, db_session, tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    job = Job(title="负数按不限制", status="done")
+    db_session.add(job)
+    db_session.commit()
+    play = app_settings.job_workdir(job.id) / "play.mp4"
+    _write(play, 2 * 1024 * 1024)
+
+    response = client.put("/api/settings", json={"play_quota_mb": -5})
+    assert response.json()["play_quota_mb"] == 0
+    assert play.exists()
