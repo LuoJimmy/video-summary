@@ -888,6 +888,35 @@ def test_batch_job_actions(client, db_session, tmp_path, monkeypatch):
     assert not folder.exists()
 
 
+def test_batch_retry_enqueues_same_queue(client, db_session, monkeypatch):
+    from app.services import jobqueue
+
+    calls: list[str] = []
+    monkeypatch.setattr(jobqueue, "enqueue_job", calls.append)
+    first = client.post(
+        "/api/jobs",
+        json={"source_url": "https://cdn.example.com/a.mp4", "title": "甲"},
+    ).json()
+    second = client.post(
+        "/api/jobs",
+        json={"source_url": "https://cdn.example.com/b.mp4", "title": "乙"},
+    ).json()
+    for item, status in ((first, "failed"), (second, "cancelled")):
+        row = db_session.get(Job, item["id"])
+        row.status = status
+        row.stage = status
+    db_session.commit()
+
+    calls.clear()  # 创建时也会入队，这里只看重试这一步
+    resp = client.post(
+        "/api/jobs/batch",
+        json={"action": "retry", "ids": [second["id"], first["id"]]},
+    )
+    assert resp.status_code == 200
+    # 多选重试和单个重试走同一条转写队列（顺序 = 勾选顺序），本机模型仍然 1 路串行
+    assert calls == [second["id"], first["id"]]
+
+
 class FakeExtractor(MediaExtractor):
     def extract_audio(self, source, output_wav, extra_headers=None, max_seconds=None):
         Path(output_wav).parent.mkdir(parents=True, exist_ok=True)

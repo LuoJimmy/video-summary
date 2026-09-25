@@ -1429,7 +1429,9 @@ onBeforeUnmount(() => {
               }"
             >
               {{ statusLabel(job.status, job.stage) }}
-              <template v-if="isJobActive(job.status)">
+              <template
+                v-if="isJobActive(job.status) && job.stage !== 'queued'"
+              >
                 {{ job.progress }}% ·
                 {{ formatDuration(jobElapsedSeconds(job, nowMs)) }}</template
               >

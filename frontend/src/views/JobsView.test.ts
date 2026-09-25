@@ -748,6 +748,29 @@ describe("批量管理", () => {
   });
 });
 
+describe("任务列表排队状态", () => {
+  it("排队中的任务只显示排队中，不计已用时间", async () => {
+    const el = await mountJobs([
+      makeJob({
+        status: "pending",
+        stage: "queued",
+        progress: 0,
+        started_at: null,
+      }),
+    ]);
+    const badge = el.querySelector(".tag") as HTMLElement;
+    expect(badge.textContent?.trim()).toBe("排队中");
+  });
+
+  it("真正开跑后显示进度与已用时间", async () => {
+    const el = await mountJobs([
+      makeJob({ status: "running", stage: "transcribing", progress: 42 }),
+    ]);
+    const badge = el.querySelector(".tag") as HTMLElement;
+    expect(badge.textContent?.replace(/\s+/g, " ")).toContain("转写中 42% ·");
+  });
+});
+
 describe("任务列表分页", () => {
   it("展示增强分页器并按页请求", async () => {
     const firstPage = Array.from({ length: 10 }, (_, index) =>

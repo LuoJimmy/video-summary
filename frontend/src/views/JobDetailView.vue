@@ -126,6 +126,7 @@ const previewKind = computed(() =>
 const originalHttpUrl = computed(() => publicSourceUrl(job.value?.source_url));
 const elapsedLabel = computed(() => {
   if (!job.value || !jobBusy.value) return "";
+  if (job.value.stage === "queued") return "";
   return formatDuration(jobElapsedSeconds(job.value, nowMs.value));
 });
 const sourceMeta = computed(() => {

@@ -532,6 +532,25 @@ describe("综述章节与片子时钟", () => {
   });
 });
 
+describe("排队状态耗时", () => {
+  it("排队中的任务不显示已用时", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({ status: "pending", stage: "queued", progress: 0, error: "" })
+    );
+    const el = await mountDetail();
+    expect(el.textContent).toContain("排队中");
+    expect(el.textContent).not.toContain("已用时");
+  });
+
+  it("开始转写后显示已用时", async () => {
+    vi.mocked(api.job).mockResolvedValue(
+      makeJob({ status: "running", stage: "transcribing", progress: 42 })
+    );
+    const el = await mountDetail();
+    expect(el.textContent).toContain("已用时");
+  });
+});
+
 describe("媒体地址覆盖", () => {
   it("默认不显示，解析失败后展开并随重试提交", async () => {
     const failed = makeJob({
