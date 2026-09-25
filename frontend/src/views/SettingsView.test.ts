@@ -132,6 +132,7 @@ const localSettings: AppSettings = {
   summarize_model: "deepseek-v4-flash",
   capture_seconds: "180",
   summarize_concurrency: 3,
+  transcribe_concurrency: 0,
   transcribe_threads: 4,
   transcribe_fast: false,
   cpu_count: 10,
@@ -253,6 +254,7 @@ describe("设置页模型限制说明", () => {
     expect(el.textContent).toContain("分段并发数");
     expect(el.textContent).toContain("默认 3 路");
     expect(el.textContent).toContain("转写线程");
+    expect(el.textContent).not.toContain("并行转写数"); // 本机转写就是串行，不给并行项
     expect(el.textContent).toContain("快速转写");
     expect(el.textContent).not.toContain("不要填 tiny / small / large");
     expect(el.textContent).toContain("展开领域规则");
@@ -276,6 +278,18 @@ describe("设置页模型限制说明", () => {
     expect(el.textContent).toContain("会退回默认的本机 SenseVoice");
     expect(el.textContent).toContain("不要填 tiny / small / large");
     expect(el.textContent).not.toContain("本地转写不使用 Base URL 和 API Key");
+  });
+
+  it("自定义转写时可设并行转写数", async () => {
+    const el = await mountSettings({
+      ...localSettings,
+      transcribe_model: "whisper-1",
+      transcribe_base_url: "https://api.openai.com/v1",
+      transcribe_api_key: "sk-test",
+      transcribe_concurrency: 4,
+    });
+    expect(el.textContent).toContain("并行转写数");
+    expect(el.textContent).toContain("始终 1 路串行");
   });
 
   it("保存领域只提交当前领域包", async () => {

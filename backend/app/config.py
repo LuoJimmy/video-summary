@@ -19,9 +19,12 @@ class Settings(BaseSettings):
     default_summarize_base_url: str = "https://api.deepseek.com/v1"
     default_summarize_model: str = "deepseek-v4-flash"
     summarize_concurrency: int = 3
+    # 云端转写同时跑几个任务：本机模型（SenseVoice / faster-whisper / 指向本机地址的接口）
+    # 始终串行，只有云端接口按这个数并行；设置页「并行转写数」留空（自动）时用它。
+    transcribe_concurrency: int = 3
     prefetch_sensevoice: bool = True
     schedule_loop: bool = True
-    # 转写队列：只在后台单线程里一个一个跑，批量创建的任务排队，不会互相抢 CPU。
+    # 转写队列：批量创建的任务排队跑，本机转写一个一个来，云端接口按 transcribe_concurrency 并行。
     # 关掉后队列工作线程不启动，任务会一直停在「排队中」（测试里用它避免动到真实数据）。
     job_queue: bool = True
 

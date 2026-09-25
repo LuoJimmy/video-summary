@@ -74,6 +74,7 @@ const form = ref<AppSettings>({
   summarize_model: "",
   capture_seconds: "180",
   summarize_concurrency: 3,
+  transcribe_concurrency: 0,
   transcribe_threads: 1,
   transcribe_fast: false,
   cpu_count: 1,
@@ -199,6 +200,20 @@ const concurrencySelect = computed({
     form.value.summarize_concurrency = Number.isFinite(parsed)
       ? Math.max(1, Math.min(8, Math.round(parsed)))
       : 3;
+  },
+});
+const transcribeConcurrencyOptions = ["0", ...concurrencyOptions];
+const transcribeConcurrencySelect = computed({
+  get: () => {
+    const value = Number(form.value.transcribe_concurrency);
+    if (!Number.isFinite(value) || value <= 0) return "0"; // 0 = 自动
+    return String(Math.max(1, Math.min(8, Math.round(value))));
+  },
+  set: (value: string) => {
+    const parsed = Number(value);
+    form.value.transcribe_concurrency = Number.isFinite(parsed)
+      ? Math.max(0, Math.min(8, Math.round(parsed)))
+      : 0;
   },
 });
 const threadSelect = computed({
@@ -1112,6 +1127,30 @@ const highlightPhrasesText = computed({
                   :key="item"
                   :value="item"
                   >{{ item }} 路</SelectItem
+                >
+              </SelectContent>
+            </Select>
+          </div>
+          <div v-if="!localTranscribe" class="field field-sm">
+            <div class="flex items-center gap-1">
+              <Label>并行转写数</Label>
+              <InfoTip label="并行转写说明">
+                云端接口可以同时跑几个任务，默认 3
+                路，调太高可能触发接口限流。本机模型（SenseVoice /
+                Whisper）和指向本机地址的接口吃的是同一台机器的 CPU，始终 1
+                路串行，这里不生效。
+              </InfoTip>
+            </div>
+            <Select v-model="transcribeConcurrencySelect">
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem
+                  v-for="item in transcribeConcurrencyOptions"
+                  :key="item"
+                  :value="item"
+                  >{{ item === "0" ? "自动" : item + " 路" }}</SelectItem
                 >
               </SelectContent>
             </Select>

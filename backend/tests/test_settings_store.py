@@ -39,6 +39,17 @@ def test_summarize_concurrency_roundtrip_and_clamp(db_session):
     assert load_settings(db_session).summarize_concurrency == 4
 
 
+def test_transcribe_concurrency_roundtrip_and_clamp(db_session):
+    from app.services.settings_store import load_settings, save_settings
+
+    assert load_settings(db_session).transcribe_concurrency == 0  # 0 = 自动
+    assert save_settings(db_session, {"transcribe_concurrency": 4}).transcribe_concurrency == 4
+    assert save_settings(db_session, {"transcribe_concurrency": 99}).transcribe_concurrency == 8
+    assert save_settings(db_session, {"transcribe_concurrency": ""}).transcribe_concurrency == 0
+    assert save_settings(db_session, {"transcribe_concurrency": -3}).transcribe_concurrency == 0
+    assert load_settings(db_session).transcribe_concurrency == 0
+
+
 def test_default_transcribe_threads_is_80_percent(monkeypatch):
     from app.services.settings_store import default_transcribe_threads, parse_transcribe_threads
 

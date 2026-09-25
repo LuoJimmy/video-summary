@@ -12,8 +12,9 @@ from app.services import jobqueue
 class RecordingPipeline:
     """记录每个任务的起止，用来看队列是不是一个一个跑的。"""
 
-    def __init__(self, delay: float = 0.02) -> None:
+    def __init__(self, delay: float = 0.02, barrier: threading.Barrier | None = None) -> None:
         self.delay = delay
+        self.barrier = barrier
         self.events: list[tuple[str, str]] = []
         self.active = 0
         self.peak = 0
@@ -24,6 +25,9 @@ class RecordingPipeline:
             self.active += 1
             self.peak = max(self.peak, self.active)
         self.events.append(("start", job_id))
+        if self.barrier is not None:
+            # 只有真的同时在跑才能一起过闸；串行时这里会超时，任务自然拿不到 end
+            self.barrier.wait(timeout=2)
         time.sleep(self.delay)
         self.events.append(("end", job_id))
         with self._lock:
@@ -36,6 +40,7 @@ class RecordingPipeline:
 @pytest.fixture
 def queue():
     jobqueue.stop_worker()  # 顺手清掉别的用例留在队列里的任务
+    jobqueue.set_concurrency(1)  # 默认本机串行；要测云端并行的用例自己调高
     yield jobqueue
     jobqueue.stop_worker()
 
@@ -73,6 +78,15 @@ def _wait_done(pipeline: RecordingPipeline, count: int) -> None:
             return
         time.sleep(0.01)
     raise AssertionError(f"队列没把任务跑完：{pipeline.events}")
+
+
+def _wait_digest(pipeline: RecordingPipeline) -> None:
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if any(item[0] == "digest" for item in pipeline.events):
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"汇总没跑起来：{pipeline.events}")
 
 
 def test_queue_runs_jobs_one_by_one(queue, queue_db, monkeypatch):
@@ -152,10 +166,10 @@ def test_schedule_batch_enters_the_same_queue(queue, monkeypatch):
     ran: list[tuple[str, str]] = []
     pipeline = RecordingPipeline()
     monkeypatch.setattr(jobqueue, "get_pipeline", lambda: pipeline)
-    monkeypatch.setattr(schedule, "get_pipeline", lambda: pipeline)
     monkeypatch.setattr("app.services.digest.run_schedule_digest", lambda log_id: ran.append(("digest", log_id)))
     schedule._execute_jobs(["s1", "s2"], digest_log_id="log-1")
     assert pipeline.events == []  # 投进队列就返回，不在请求线程里跑
+    assert queue.queued_job_ids() == ["s1", "s2"]  # 整批拆成一个个任务排队，汇总另算一项
     queue.start_worker()
     _wait_done(pipeline, 2)
     assert pipeline.events == [
@@ -165,6 +179,124 @@ def test_schedule_batch_enters_the_same_queue(queue, monkeypatch):
         ("end", "s2"),
     ]
     assert ran == [("digest", "log-1")]
+
+
+def test_schedule_digest_waits_for_the_whole_batch(queue, monkeypatch):
+    from app.services import schedule
+
+    pipeline = RecordingPipeline(delay=0.05)
+    monkeypatch.setattr(jobqueue, "get_pipeline", lambda: pipeline)
+    monkeypatch.setattr(
+        "app.services.digest.run_schedule_digest",
+        lambda log_id: pipeline.events.append(("digest", log_id)),
+    )
+    queue.set_concurrency(3)  # 云端接口：两个任务并行跑
+    schedule._execute_jobs(["s1", "s2"], digest_log_id="log-1")
+    queue.start_worker()
+    _wait_done(pipeline, 2)
+    _wait_digest(pipeline)
+    assert pipeline.events.count(("digest", "log-1")) == 1
+    assert pipeline.events[-1] == ("digest", "log-1")  # 汇总排在整批任务后面
+
+
+def test_forget_releases_digest_wait(queue, monkeypatch):
+    from app.services import schedule
+
+    ran: list[tuple[str, str]] = []
+    monkeypatch.setattr("app.services.digest.run_schedule_digest", lambda log_id: ran.append(("digest", log_id)))
+    schedule._execute_jobs(["s1"], digest_log_id="log-1")
+    queue.forget("s1")  # 任务取消 / 删掉后，汇总不该一直等它
+    queue.start_worker()
+    deadline = time.time() + 3
+    while time.time() < deadline and not ran:
+        time.sleep(0.01)
+    assert ran == [("digest", "log-1")]
+
+
+def test_cloud_concurrency_runs_jobs_together(queue, queue_db, monkeypatch):
+    jobs = [_job(queue_db, f"云端{index}") for index in range(1, 4)]
+    pipeline = RecordingPipeline(delay=0.05, barrier=threading.Barrier(3))
+    monkeypatch.setattr(jobqueue, "get_pipeline", lambda: pipeline)
+    queue.set_concurrency(3)  # 云端接口：3 路并行
+    for job in jobs:
+        queue.enqueue_job(job.id)
+    queue.start_worker()
+    _wait_done(pipeline, len(jobs))
+    assert pipeline.peak == 3  # 三个任务真的同时在跑
+    assert sorted(item[1] for item in pipeline.events if item[0] == "start") == sorted(job.id for job in jobs)
+
+
+def _app_settings(**overrides):
+    from app.schemas import AppSettingsOut
+
+    data = {
+        "transcribe_model": "",
+        "transcribe_api_key": "",
+        "transcribe_base_url": "",
+        "transcribe_concurrency": 0,
+    }
+    data.update(overrides)
+    return AppSettingsOut(**data)
+
+
+def test_is_local_transcribe_flags_local_sources():
+    from app.services.transcribe import is_local_transcribe
+
+    assert is_local_transcribe(_app_settings(transcribe_model="sensevoice-small-q8")) is True
+    assert is_local_transcribe(_app_settings(transcribe_model="large-v3")) is True
+    assert is_local_transcribe(_app_settings(transcribe_model="whisper-1")) is True  # 没配 Key 会退回本机 SenseVoice
+    assert is_local_transcribe(_app_settings(transcribe_model="", transcribe_api_key="sk")) is False
+    cloud = {"transcribe_model": "whisper-1", "transcribe_api_key": "sk"}
+    assert is_local_transcribe(_app_settings(**cloud)) is False
+    assert is_local_transcribe(_app_settings(**cloud, transcribe_base_url="http://localhost:9000/v1")) is True
+
+
+def test_resolve_concurrency_keeps_local_transcribe_serial(queue):
+    # 本机模型：SenseVoice、faster-whisper、以及没配 Key / 指向本机地址的接口，一律串行
+    assert queue.resolve_concurrency(_app_settings(transcribe_model="sensevoice-small-q8")) == 1
+    assert queue.resolve_concurrency(_app_settings(transcribe_model="small")) == 1
+    assert queue.resolve_concurrency(_app_settings(transcribe_model="whisper-1")) == 1
+    assert (
+        queue.resolve_concurrency(
+            _app_settings(
+                transcribe_model="whisper-1",
+                transcribe_api_key="sk-test",
+                transcribe_base_url="http://127.0.0.1:9000/v1",
+            )
+        )
+        == 1
+    )
+
+
+def test_resolve_concurrency_lets_cloud_run_parallel(queue):
+    cloud = {
+        "transcribe_model": "whisper-1",
+        "transcribe_api_key": "sk-test",
+        "transcribe_base_url": "https://api.openai.com/v1",
+    }
+    assert queue.resolve_concurrency(_app_settings(**cloud)) == 3  # 自动：用 TRANSCRIBE_CONCURRENCY
+    assert queue.resolve_concurrency(_app_settings(**cloud, transcribe_concurrency=4)) == 4
+    assert queue.resolve_concurrency(_app_settings(**cloud, transcribe_concurrency=99)) == 8
+    assert queue.concurrency() == 1  # 只算不发号，队列并行数没被动过
+
+
+def test_refresh_concurrency_follows_saved_settings(queue, db_session):
+    from app.services.settings_store import save_settings
+
+    save_settings(
+        db_session,
+        {
+            "transcribe_model": "whisper-1",
+            "transcribe_api_key": "sk-test",
+            "transcribe_base_url": "https://api.openai.com/v1",
+            "transcribe_concurrency": 4,
+        },
+    )
+    assert queue.refresh_concurrency(db_session) == 4
+    assert queue.concurrency() == 4
+    save_settings(db_session, {"transcribe_model": "sensevoice-small-q8"})  # 换回本机就退回串行
+    assert queue.refresh_concurrency(db_session) == 1
+    assert queue.concurrency() == 1
 
 
 def test_create_job_goes_through_queue(client, queue):

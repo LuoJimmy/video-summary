@@ -42,6 +42,7 @@ const settings: AppSettings = {
   summarize_model: "",
   capture_seconds: "0",
   summarize_concurrency: 3,
+  transcribe_concurrency: 0,
   transcribe_threads: 4,
   transcribe_fast: false,
   cpu_count: 10,

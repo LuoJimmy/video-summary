@@ -17,6 +17,7 @@ KEYS = (
     "summarize_model",
     "capture_seconds",
     "summarize_concurrency",
+    "transcribe_concurrency",
     "transcribe_threads",
     "transcribe_fast",
     "ai_proofread",
@@ -25,6 +26,7 @@ KEYS = (
 )
 FLAG_KEYS = {"ai_proofread", "show_transcript", "transcribe_fast"}
 MAX_PLAY_QUOTA_MB = 1024 * 1024
+MAX_TRANSCRIBE_CONCURRENCY = 8
 
 
 def _get(db: Session, key: str, default: str = "") -> str:
@@ -49,6 +51,15 @@ def parse_concurrency(value: object, default: int = 3) -> int:
     except (TypeError, ValueError):
         number = default
     return max(1, min(number, 8))
+
+
+def parse_transcribe_concurrency(value: object, default: int = 0) -> int:
+    """并行转写路数：0 表示自动（本机 1 路 / 云端用 TRANSCRIBE_CONCURRENCY）。"""
+    try:
+        number = int(str(value).strip() or default)
+    except (TypeError, ValueError):
+        number = default
+    return max(0, min(number, MAX_TRANSCRIBE_CONCURRENCY))
 
 
 def cpu_count() -> int:
@@ -126,6 +137,7 @@ def load_settings(db: Session) -> AppSettingsOut:
             settings.summarize_concurrency,
         ),
         transcribe_threads=parse_transcribe_threads(_get(db, "transcribe_threads")),
+        transcribe_concurrency=parse_transcribe_concurrency(_get(db, "transcribe_concurrency")),
         transcribe_fast=_flag(db, "transcribe_fast", False),
         ai_proofread=_flag(db, "ai_proofread", True),
         show_transcript=_flag(db, "show_transcript", True),
@@ -146,6 +158,8 @@ def save_settings(db: Session, payload: dict) -> AppSettingsOut:
             value = str(parse_concurrency(payload[key], settings.summarize_concurrency))
         elif key == "transcribe_threads":
             value = str(parse_transcribe_threads(payload[key]))
+        elif key == "transcribe_concurrency":
+            value = str(parse_transcribe_concurrency(payload[key]))
         elif key in FLAG_KEYS:
             default = False if key == "transcribe_fast" else True
             value = _flag_text(payload[key], default)

@@ -10,6 +10,7 @@ from app.schemas import (
     StorageCleanupOut,
     StorageUsageOut,
 )
+from app.services import jobqueue
 from app.services.domain import add_preset, delete_preset
 from app.services.settings_store import load_settings, save_settings
 from app.services.storage import (
@@ -21,6 +22,9 @@ from app.services.storage import (
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
+# 这几个改动会影响「本机串行 / 云端并行」的判断，改完要重新算队列并行路数
+TRANSCRIBE_KEYS = {"transcribe_model", "transcribe_api_key", "transcribe_base_url", "transcribe_concurrency"}
+
 
 @router.get("", response_model=AppSettingsOut)
 def get_settings(db: Session = Depends(get_db)) -> AppSettingsOut:
@@ -31,6 +35,9 @@ def get_settings(db: Session = Depends(get_db)) -> AppSettingsOut:
 def put_settings(payload: AppSettingsIn, db: Session = Depends(get_db)) -> AppSettingsOut:
     data = payload.model_dump(exclude_unset=True)
     saved = save_settings(db, data)
+    if TRANSCRIBE_KEYS & set(data):
+        # 换成本机模型就退回串行，换成云端接口就按并行转写数同时跑几个
+        jobqueue.refresh_concurrency(db)
     if "play_quota_mb" in data:
         # 改了播放缓存上限就立刻按新上限裁剪，不用等下一次播放
         enforce_play_quota(db)

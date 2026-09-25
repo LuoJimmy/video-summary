@@ -1,53 +1,71 @@
 """转写任务的排队执行。
 
 批量创建时一次丢进很多任务，如果每个任务各起一个线程并行跑本机转写，
-CPU 被摊薄，单个任务反而要等很久。这里改成单工作线程 FIFO：
-同一时刻只有一个任务真正占用转写，排在后面的任务保持 pending / stage=queued
-（界面显示「排队中」）；轮到它时才记开始时间再交给流水线，排队时间不算进任务耗时。
+CPU 被摊薄，单个任务反而要等很久。这里统一走一条先进先出的队伍：
+
+- 本机转写（SenseVoice / faster-whisper / 指向本机地址的接口）同一时刻只跑一个；
+- 云端接口可以并行，路数取设置页「并行转写数」，留空（0）时用
+  `TRANSCRIBE_CONCURRENCY`（默认 3 路）。
+
+排在后面的任务保持 pending / stage=queued（界面显示「排队中」），轮到它时才记开始时间
+再交给流水线，排队等待的时间不算进任务耗时。
 """
 
 from __future__ import annotations
 
 import threading
-from collections import deque
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models import Job, stamp_job_start
+from app.schemas import AppSettingsOut
 from app.services.pipeline import get_pipeline
+from app.services.settings_store import load_settings, parse_transcribe_concurrency
+from app.services.transcribe import is_local_transcribe
+
+MAX_WORKERS = 8
+IDLE_WAIT = 0.2
 
 
 @dataclass
 class _Item:
     job_id: str
     run: Callable[[], None]
+    depends_on: frozenset[str] = frozenset()
 
 
-_items: deque[_Item] = deque()
+_items: list[_Item] = []
 _queued_ids: set[str] = set()
-_running_id = ""
+# 排队中 + 正在跑的任务：等它们的汇总项要等这些都跑完才轮到
+_unfinished: set[str] = set()
+_running_ids: set[str] = set()
+_active = 0
+_concurrency = 1
 _lock = threading.Lock()
 _wake = threading.Event()
 _stop = threading.Event()
-_thread: threading.Thread | None = None
+_threads: list[threading.Thread] = []
 _generation = 0
-IDLE_WAIT = 0.2
 
 
-def enqueue(job_id: str, run: Callable[[], None]) -> None:
+def enqueue(job_id: str, run: Callable[[], None], depends_on: Iterable[str] = ()) -> None:
     """排到队尾。同一个任务重复提交只留一次（重试连点不会排两遍）。
 
-    job_id 留空表示整批算一项（定时任务一次触发创建的那批），不按任务去重、也不单独记开始时间。
+    job_id 留空表示整批算一项（比如定时批次的汇总总结），用 depends_on 指定要等哪些任务
+    跑完才轮到它；被等的那几个任务取消 / 删掉后这份等待会直接放行。
     """
+    deps = frozenset(item for item in depends_on if item)
     with _lock:
-        if job_id and job_id in _queued_ids:
-            return
         if job_id:
+            if job_id in _queued_ids:
+                return
             _queued_ids.add(job_id)
-        _items.append(_Item(job_id=job_id, run=run))
+            _unfinished.add(job_id)
+        _items.append(_Item(job_id=job_id, run=run, depends_on=deps))
     _wake.set()
 
 
@@ -62,13 +80,14 @@ def enqueue_retranscribe(job_id: str, continue_after: bool = True) -> None:
 
 
 def forget(job_id: str) -> None:
-    """任务被取消 / 删除后从队列里摘掉，别白占一个位置。"""
-    global _items
+    """任务被取消 / 删除后从队列里摘掉，别白占一个位置，也别让等它的汇总卡住。"""
     if not job_id:
         return
     with _lock:
         _queued_ids.discard(job_id)
-        _items = deque(item for item in _items if item.job_id != job_id)
+        _unfinished.discard(job_id)
+        _items[:] = [item for item in _items if item.job_id != job_id]
+    _wake.set()
 
 
 def queued_job_ids() -> list[str]:
@@ -77,10 +96,53 @@ def queued_job_ids() -> list[str]:
         return [item.job_id for item in _items if item.job_id]
 
 
-def running_job_id() -> str:
-    """当前正在跑的任务 id，空闲时是空串。"""
+def running_job_ids() -> list[str]:
+    """当前正在跑的任务 id，空闲时是空列表。"""
     with _lock:
-        return _running_id
+        return sorted(_running_ids)
+
+
+def concurrency() -> int:
+    """当前允许同时跑几个任务。"""
+    with _lock:
+        return _concurrency
+
+
+def set_concurrency(value: int) -> None:
+    global _concurrency
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = 1
+    with _lock:
+        _concurrency = max(1, min(number, MAX_WORKERS))
+    _wake.set()
+
+
+def resolve_concurrency(app_settings: AppSettingsOut) -> int:
+    """本机转写固定 1 路（并行只会互相抢 CPU）；云端接口按配置并行。
+
+    设置里留空 / 0 表示自动，用 `TRANSCRIBE_CONCURRENCY`（默认 3 路）。
+    """
+    if is_local_transcribe(app_settings):
+        return 1
+    configured = parse_transcribe_concurrency(getattr(app_settings, "transcribe_concurrency", 0))
+    return configured or max(1, min(int(settings.transcribe_concurrency), MAX_WORKERS))
+
+
+def configure(app_settings: AppSettingsOut) -> int:
+    """按设置调整并行路数（启动、保存设置时调用）。"""
+    value = resolve_concurrency(app_settings)
+    set_concurrency(value)
+    return value
+
+
+def refresh_concurrency(db: Session) -> int:
+    """读一遍设置再调整并行路数；读不出来就沿用当前值。"""
+    try:
+        return configure(load_settings(db))
+    except Exception:
+        return concurrency()
 
 
 def requeue_pending(db: Session) -> int:
@@ -92,35 +154,44 @@ def requeue_pending(db: Session) -> int:
 
 
 def start_worker() -> None:
-    """启动唯一的转写工作线程（应用启动时调用）。"""
-    global _thread, _generation
-    if _thread is not None and _thread.is_alive():
+    """启动转写工作线程（应用启动时调用）。线程按上限起，实际并行路数由 _concurrency 控制。"""
+    global _threads, _generation
+    _threads = [item for item in _threads if item.is_alive()]
+    if _threads:
         return
     _generation += 1
     generation = _generation
     _stop.clear()
     _wake.clear()
-    _thread = threading.Thread(target=_loop, args=(generation,), name="job-queue", daemon=True)
-    _thread.start()
+    _threads = [
+        threading.Thread(target=_loop, args=(generation,), name=f"job-queue-{index + 1}", daemon=True)
+        for index in range(MAX_WORKERS)
+    ]
+    for thread in _threads:
+        thread.start()
 
 
 def stop_worker() -> None:
     """停掉工作线程并丢掉还没跑的任务（退出时用；这些任务下次启动会重新排队）。"""
-    global _thread
+    global _threads, _active
     _stop.set()
     _wake.set()
-    thread = _thread
-    if thread is not None and thread.is_alive():
-        thread.join(timeout=2)
-    _thread = None
+    current = threading.current_thread()
+    for thread in _threads:
+        if thread is not current and thread.is_alive():
+            thread.join(timeout=2)
+    _threads = []
     with _lock:
         _items.clear()
         _queued_ids.clear()
+        _unfinished.clear()
+        _running_ids.clear()
+        _active = 0
 
 
 def _loop(generation: int) -> None:
-    # 代次对不上说明这个线程已经被 stop_worker() 换掉（哪怕它手上那个任务还没跑完），自己退出，
-    # 免得重启后同时存在两个工作线程又把转写跑成并行。
+    # 代次对不上说明这批线程已经被 stop_worker() 换掉（哪怕手上那个任务还没跑完），自己退出，
+    # 免得重启后同时存在两批工作线程又把转写跑成并行。
     while not _stop.is_set() and generation == _generation:
         item = _take()
         if item is None:
@@ -131,18 +202,27 @@ def _loop(generation: int) -> None:
 
 
 def _take() -> _Item | None:
-    global _running_id
+    """取下一个能跑的任务：并行路数没占满，且它要等的那批任务都已经跑完。"""
+    global _active
     with _lock:
-        if not _items:
+        if _active >= _concurrency:
             return None
-        item = _items.popleft()
+        index = next(
+            (index for index, item in enumerate(_items) if not item.depends_on & _unfinished),
+            None,
+        )
+        if index is None:
+            return None
+        item = _items.pop(index)
         _queued_ids.discard(item.job_id)
-        _running_id = item.job_id
+        _active += 1
+        if item.job_id:
+            _running_ids.add(item.job_id)
     return item
 
 
 def _run(item: _Item) -> None:
-    global _running_id
+    global _active
     try:
         _mark_started(item.job_id)
         item.run()
@@ -150,7 +230,11 @@ def _run(item: _Item) -> None:
         pass  # 单个任务出错不能让队列停摆（失败状态由流水线自己写）
     finally:
         with _lock:
-            _running_id = ""
+            _active -= 1
+            if item.job_id:
+                _running_ids.discard(item.job_id)
+                _unfinished.discard(item.job_id)
+        _wake.set()
 
 
 def _mark_started(job_id: str) -> None:

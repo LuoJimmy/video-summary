@@ -908,22 +908,24 @@ def test_schedule_digest_disabled_skips_digest_log(client, monkeypatch):
     assert captured["digest"] is None
 
 
-def test_run_created_jobs_digest_only_with_log(monkeypatch):
-    from app.services.schedule import _run_created_jobs
+def test_execute_jobs_queues_each_job_and_waits_for_digest(monkeypatch):
+    from app.services import jobqueue
+    from app.services.schedule import _execute_jobs
 
-    ran = []
-
-    class Pipe:
-        def run_job(self, job_id):
-            ran.append(("job", job_id))
-
-    monkeypatch.setattr("app.services.schedule.get_pipeline", lambda: Pipe())
-    monkeypatch.setattr("app.services.digest.run_schedule_digest", lambda log_id: ran.append(("digest", log_id)))
-    _run_created_jobs(["j1", "j2"], digest_log_id="log-1")
-    assert ran == [("job", "j1"), ("job", "j2"), ("digest", "log-1")]
-    ran.clear()
-    _run_created_jobs(["j3"])
-    assert ran == [("job", "j3")]
+    calls: list[tuple] = []
+    monkeypatch.setattr(jobqueue, "enqueue_job", lambda job_id: calls.append(("job", job_id)))
+    monkeypatch.setattr(
+        jobqueue,
+        "enqueue",
+        lambda job_id, run, depends_on=(): calls.append(("digest", job_id, sorted(depends_on), run)),
+    )
+    _execute_jobs(["j1", "j2"], digest_log_id="log-1")
+    assert calls[0] == ("job", "j1")
+    assert calls[1] == ("job", "j2")
+    assert calls[2][:3] == ("digest", "", ["j1", "j2"])  # 汇总排在后面，等这两个任务跑完
+    calls.clear()
+    _execute_jobs(["j3"])
+    assert calls == [("job", "j3")]  # 没开汇总就只排任务
 
 
 def test_start_detached_run_skips_previous_completed_log(db_session, monkeypatch):

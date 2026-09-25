@@ -32,7 +32,6 @@ from app.services.ingest.bilibili import is_bili_rate_limited
 from app.services.ingest.registry import list_catalog
 from app.services.ingest.xiaoe import XIAOE_HOSTS, parse_xiaoe_ref
 from app.services.jsonutil import dumps
-from app.services.pipeline import get_pipeline
 from app.services.settings_store import parse_flag
 from app.services.sourcetime import SHANGHAI, ensure_utc
 
@@ -724,27 +723,24 @@ def run_once(
     return result
 
 
-def _run_created_jobs(job_ids: list[str], digest_log_id: str | None = None) -> None:
-    for job_id in job_ids:
-        try:
-            get_pipeline().run_job(job_id)
-        except Exception:
-            continue
-    if digest_log_id:
-        try:
-            from app.services.digest import run_schedule_digest
+def _run_schedule_digest(digest_log_id: str) -> None:
+    try:
+        from app.services.digest import run_schedule_digest
 
-            run_schedule_digest(digest_log_id)
-        except Exception:
-            return
+        run_schedule_digest(digest_log_id)
+    except Exception:
+        return
 
 
 def _execute_jobs(job_ids: list[str], digest_log_id: str | None = None) -> None:
     if not job_ids:
         return
-    # 整批算队列里的一项：同一时刻只有一个任务真正转写，和手动创建的任务共用一条队伍，
-    # 免得两个线程各跑一个任务把 CPU 摊薄。整批跑完再出汇总。
-    jobqueue.enqueue("", lambda: _run_created_jobs(job_ids, digest_log_id=digest_log_id))
+    # 每个任务各占队列里的一项，和手动创建的任务共用一条队伍：本机转写仍然一个一个跑，
+    # 云端接口则按「并行转写数」同时跑几个。汇总总结排在它们后面，等整批跑完再出。
+    for job_id in job_ids:
+        jobqueue.enqueue_job(job_id)
+    if digest_log_id:
+        jobqueue.enqueue("", lambda: _run_schedule_digest(digest_log_id), depends_on=job_ids)
 
 
 def seconds_until_tick(enabled: bool, time_text: str, now: datetime | None = None) -> float:

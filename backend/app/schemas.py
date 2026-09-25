@@ -77,6 +77,7 @@ class AppSettingsIn(BaseModel):
     summarize_model: str = ""
     capture_seconds: str = "180"
     summarize_concurrency: int = 3
+    transcribe_concurrency: int = 0
     transcribe_threads: int = 0
     transcribe_fast: bool = False
     ai_proofread: bool = True

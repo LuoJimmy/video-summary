@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
@@ -16,11 +17,32 @@ class TranscribeError(RuntimeError):
 
 
 LOCAL_WHISPER_MODELS = {"tiny", "base", "small", "medium", "large", "large-v2", "large-v3"}
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
 
 def is_local_whisper_model(name: str) -> bool:
     normalized = (name or "").strip().lower().replace("_", "-")
     return normalized in LOCAL_WHISPER_MODELS
+
+
+def _base_url_host(base_url: str) -> str:
+    try:
+        return (urlsplit((base_url or "").strip()).hostname or "").strip().lower()
+    except ValueError:
+        return ""
+
+
+def is_local_transcribe(settings: AppSettingsOut) -> bool:
+    """这次转写是不是跑在本机（本机模型名，或没配 Key / 指向本机地址的接口）。
+
+    本机的活都吃同一台机器的 CPU，同时跑几个只会互相抢；云端接口才适合并行。
+    """
+    model = settings.transcribe_model or ""
+    if is_sensevoice_model(model) or is_local_whisper_model(model):
+        return True
+    if not (settings.transcribe_api_key or "").strip():
+        return True
+    return _base_url_host(settings.transcribe_base_url) in LOCAL_HOSTS
 
 
 def _resolve_local_whisper(model_name: str) -> str:

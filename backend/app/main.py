@@ -27,8 +27,10 @@ async def lifespan(_: FastAPI):
         migrate_settings_defaults(db)
         migrate_schedule_rules(db)
         backfill_job_source_times(db)
-        transcribe_model = load_settings(db).transcribe_model
+        app_settings = load_settings(db)
+        transcribe_model = app_settings.transcribe_model
         if settings.job_queue:
+            jobqueue.configure(app_settings)  # 本机转写 1 路 / 云端按「并行转写数」并行
             jobqueue.requeue_pending(db)
     finally:
         db.close()

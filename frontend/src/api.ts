@@ -29,6 +29,7 @@ export type AppSettings = {
   summarize_model: string;
   capture_seconds: string;
   summarize_concurrency: number;
+  transcribe_concurrency: number;
   transcribe_threads: number;
   transcribe_fast: boolean;
   cpu_count?: number;

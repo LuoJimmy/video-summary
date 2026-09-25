@@ -15,7 +15,8 @@
 - 转写完的音频改成 opus 归档：转写完成后抽出的 16kHz WAV 会压成 opus（约 WAV 的十分之一，1 小时视频约 115MB → 约 11MB）留在任务目录，重新转写时自动解回 WAV，不用重新下载原始地址
 - 设置页「关于」新增音频归档占用、「压缩历史音频」与「清理音频归档」按钮（`GET /api/settings/storage`、`POST /api/settings/storage/archive-wav`、`POST /api/settings/storage/cleanup-audio`）
 - 设置页「关于」新增「视频存储配额」：播放缓存（`play.mp4`）超过上限后按「最久没播放」自动删除，正在播放的那份不删；留空或 0 表示不限制，默认不限制（`PUT /api/settings` 传 `play_quota_mb`（MB），`GET /api/settings/storage` 返回 `play_quota_bytes`）
-- 转写改成排队跑：后台只有一个工作线程按创建顺序一个个转写（`app/services/jobqueue.py`），批量建任务时后面的显示「排队中」，不再几个任务同时抢 CPU 把每个都拖慢；定时任务触发创建的那一批也排在同一条队伍里，整批跑完再出汇总总结
+- 转写改成排队跑：任务按创建顺序排队（`app/services/jobqueue.py`），批量建任务时轮不到的先显示「排队中」，不再没限制地一起抢 CPU；本机转写（SenseVoice / Whisper / 指向本机地址的接口）仍然一个个跑，云端接口可以同时跑几个；定时任务触发创建的那一批也排在同一条队伍里，整批跑完再出汇总总结
+- 设置页「转写」新增「并行转写数」：云端接口最多同时跑几个任务（`PUT /api/settings` 传 `transcribe_concurrency`，留空或 0 = 自动 / 默认 3 路，最大 8 路），改完立即生效；本机模型和指向本机地址的接口吃的是同一台机器的 CPU，始终 1 路，这一项不生效
 
 ### 修复
 

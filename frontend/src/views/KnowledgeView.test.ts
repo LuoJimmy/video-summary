@@ -70,6 +70,7 @@ async function mountKnowledge(
     summarize_model: "",
     capture_seconds: "180",
     summarize_concurrency: 3,
+    transcribe_concurrency: 0,
     transcribe_threads: 4,
     transcribe_fast: false,
     cpu_count: 10,
