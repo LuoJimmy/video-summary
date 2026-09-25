@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -102,6 +102,15 @@ class AppSetting(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    # 与 app/database.py 的 JOB_INDEXES 保持一致：新库建表即带索引，旧库靠启动迁移补建
+    __table_args__ = (
+        Index("idx_jobs_status", "status"),
+        Index("idx_jobs_stamp", text("coalesce(source_created_at, created_at)"), "created_at", "id"),
+        Index("idx_jobs_created_at", "created_at", "id"),
+        Index("idx_jobs_updated_at", "updated_at"),
+        Index("idx_jobs_domain_updated_at", "domain_id", "updated_at"),
+        Index("idx_jobs_schedule_log_id", "schedule_log_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(255), default="")

@@ -111,4 +111,11 @@ Implementation perfectly matches the final plan.
   * Blockers: None
   * User Confirmation Status: Pending Confirmation
 
+* 2026-09-25
+  * Step: 给 jobs 表补查询索引
+  * Modifications: backend/app/models.py（`Job.__table_args__` 声明 6 个索引）、backend/app/database.py（新增 `JOB_INDEXES` / `create_job_indexes()`，`migrate_job_columns()` 末尾补建）、backend/tests/test_config.py（新增索引迁移与新建库索引测试）、docs/ARCHITECTURE.md（「数据与索引」）、CHANGELOG.md
+  * Change Summary: `jobs` 上按实际查询建 `status`、`coalesce(source_created_at, created_at) + created_at + id`、`created_at + id`、`updated_at`、`domain_id + updated_at`、`schedule_log_id` 六个索引，列顺序与真实 `ORDER BY` 对齐（否则 SQLite 仍会扫表 + 临时排序）：新库建表即带，老库启动时补建；缺列的旧库跳过对应索引，同名索引定义变了会自动 `DROP` 重建
+  * Reason: 任务列表排序 / 日期筛选、知识库分页、定时汇总反查此前都是全表扫描，任务量变大后变慢；`jobs` 此前除主键外没有任何索引
+  * Blockers: None
+  * User Confirmation Status: Pending Confirmation
 

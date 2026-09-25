@@ -25,6 +25,50 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+# (索引名, 索引表达式, 依赖的列)：任务列表、知识库、定时汇总反查都按这些字段过滤/排序
+# 列顺序要和真实 SQL 的 ORDER BY 对齐，否则 SQLite 会退回「扫描 + 临时排序」
+JOB_INDEXES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("idx_jobs_status", "status", ("status",)),
+    (
+        "idx_jobs_stamp",
+        "coalesce(source_created_at, created_at), created_at, id",
+        ("source_created_at", "created_at", "id"),
+    ),
+    ("idx_jobs_created_at", "created_at, id", ("created_at", "id")),
+    ("idx_jobs_updated_at", "updated_at", ("updated_at",)),
+    ("idx_jobs_domain_updated_at", "domain_id, updated_at", ("domain_id", "updated_at")),
+    ("idx_jobs_schedule_log_id", "schedule_log_id", ("schedule_log_id",)),
+)
+
+
+def _squash(sql: str) -> str:
+    return " ".join((sql or "").split()).lower()
+
+
+def create_job_indexes(conn) -> None:
+    """补建 / 校正 jobs 的查询索引；老库还没补上列时跳过依赖缺失列的索引。"""
+    columns = {row[1] for row in conn.execute(text("PRAGMA table_info(jobs)")).fetchall()}
+    if not columns:
+        return
+    current = {
+        row[0]: row[1]
+        for row in conn.execute(
+            text("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_jobs_%'")
+        ).fetchall()
+    }
+    for name, expression, needed in JOB_INDEXES:
+        if not set(needed) <= columns:
+            continue
+        statement = f"CREATE INDEX IF NOT EXISTS {name} ON jobs ({expression})"
+        existing = current.get(name)
+        if existing and _squash(existing) != _squash(statement):
+            # 索引定义升级过（例如补了排序列）就重建，否则 IF NOT EXISTS 会跳过旧定义
+            conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
+            existing = None
+        if not existing:
+            conn.execute(text(statement))
+
+
 def migrate_job_columns() -> None:
     with engine.begin() as conn:
         rows = conn.execute(text("PRAGMA table_info(jobs)")).fetchall()
@@ -50,3 +94,4 @@ def migrate_job_columns() -> None:
             conn.execute(text("ALTER TABLE schedule_logs ADD COLUMN rule_id VARCHAR(32) DEFAULT ''"))
         if log_names and "rule_name" not in log_names:
             conn.execute(text("ALTER TABLE schedule_logs ADD COLUMN rule_name VARCHAR(120) DEFAULT ''"))
+        create_job_indexes(conn)

@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine, text
 
 from app.config import Settings
-from app.database import migrate_job_columns
+from app.database import Base, migrate_job_columns
 from app.services.pipeline import StageTimer
 
 
@@ -55,6 +55,55 @@ def test_stage_timer_records_total():
     assert payload["total"] >= payload["transcribing"]
 
 
+def test_migrate_job_columns_adds_indexes(tmp_path, monkeypatch):
+    from app import database
+
+    engine = create_engine(f"sqlite:///{tmp_path}/old-index.db")
+    monkeypatch.setattr(database, "engine", engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE jobs (id VARCHAR(32) PRIMARY KEY, title VARCHAR(255),"
+                " status VARCHAR(32), created_at DATETIME, updated_at DATETIME)"
+            )
+        )
+    database.migrate_job_columns()
+    database.migrate_job_columns()  # 再跑一次应当幂等
+    with engine.connect() as conn:
+        names = {row[1] for row in conn.execute(text("PRAGMA index_list(jobs)")).fetchall()}
+        plan = conn.execute(
+            text(
+                "EXPLAIN QUERY PLAN SELECT id FROM jobs"
+                " ORDER BY coalesce(source_created_at, created_at) DESC, created_at DESC, id DESC LIMIT 20"
+            )
+        ).fetchall()
+    assert "idx_jobs_status" in names
+    assert "idx_jobs_stamp" in names
+    assert "idx_jobs_created_at" in names
+    assert "idx_jobs_updated_at" in names
+    assert "idx_jobs_domain_updated_at" in names
+    assert "idx_jobs_schedule_log_id" in names
+    # 任务列表默认按 coalesce(source_created_at, created_at) DESC, created_at DESC, id DESC 排序，应该走索引且不再临时排序
+    assert any("idx_jobs_stamp" in str(row) for row in plan)
+    assert not any("TEMP B-TREE" in str(row) for row in plan)
+
+
+def test_new_database_creates_job_indexes(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path}/fresh-index.db")
+    Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        names = {row[1] for row in conn.execute(text("PRAGMA index_list(jobs)")).fetchall()}
+        plan = conn.execute(
+            text(
+                "EXPLAIN QUERY PLAN SELECT id FROM jobs"
+                " ORDER BY coalesce(source_created_at, created_at) DESC, created_at DESC, id DESC LIMIT 20"
+            )
+        ).fetchall()
+    assert {"idx_jobs_status", "idx_jobs_stamp", "idx_jobs_created_at", "idx_jobs_updated_at"} <= names
+    # 建表时声明的索引要和迁移出来的定义一致，否则查询用不上
+    assert any("idx_jobs_stamp" in str(row) for row in plan)
+
+
 def test_migrate_job_columns_adds_timing(tmp_path, monkeypatch):
     from app import database
 
@@ -65,6 +114,7 @@ def test_migrate_job_columns_adds_timing(tmp_path, monkeypatch):
     database.migrate_job_columns()
     with engine.connect() as conn:
         names = {row[1] for row in conn.execute(text("PRAGMA table_info(jobs)")).fetchall()}
+        indexes = {row[1] for row in conn.execute(text("PRAGMA index_list(jobs)")).fetchall()}
     assert "timing_json" in names
     assert "started_at" in names
     assert "source_created_at" in names
@@ -72,3 +122,7 @@ def test_migrate_job_columns_adds_timing(tmp_path, monkeypatch):
     assert "author" in names
     assert "summarize_document" in names
     assert "schedule_log_id" in names
+    # 这张表连 created_at / status 都没有，依赖这些列的索引应当跳过而不是报错
+    assert "idx_jobs_stamp" not in indexes
+    assert "idx_jobs_created_at" not in indexes
+    assert "idx_jobs_status" not in indexes
