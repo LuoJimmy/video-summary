@@ -1,4 +1,6 @@
 import re
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from sqlalchemy import or_
@@ -22,6 +24,7 @@ KIND_LABELS = {
 MAX_HITS = 40
 MAX_CHAT_CHUNKS = 10
 MAX_CONTEXT_CHARS = 7000
+MAX_INDEX_JOBS = 200  # 切片索引缓存的任务数上限，超出按最久未用淘汰
 STOP_CHARS = set("的了是在和与或就都也要这那吗呢啊吧呀么啥着过给被把对从到而及与并或")
 STOP_WORDS = {"什么", "怎么", "如何", "哪些", "有没有", "请问", "一下", "这个", "那个", "为啥", "为何"}
 
@@ -40,7 +43,7 @@ class _Chunk:
     end: float = 0
     segment_id: int | None = None
     locator: str = ""
-    score: float = 0
+    hay: str = ""  # 繁简归一化 + casefold 的「标题 正文」，跨请求复用，避免每次检索重算
 
 
 CHAT_SYSTEM = """你是用户的私人知识库助手。资料全部来自用户自己转写的音视频或导入的文档，只存在本机，回答时不要编造资料之外的内容。
@@ -88,11 +91,11 @@ def search_knowledge(
     page_size: int = 20,
     total: int | None = None,
 ) -> KnowledgeSearchOut:
-    documents = [_doc(job) for job in jobs if job_has_knowledge_text(job)]
     query = to_simplified(query).strip()
     page = max(1, int(page or 1))
     page_size = min(100, max(1, int(page_size or 20)))
     if not query:
+        documents = [_doc(job) for job in jobs if job_has_knowledge_text(job)]
         count = total if total is not None else len(documents)
         paged = documents if total is not None else _page_items(documents, page, page_size)
         return KnowledgeSearchOut(
@@ -105,12 +108,15 @@ def search_knowledge(
             page_size=page_size,
         )
     hits = retrieve(jobs, query, limit=MAX_HITS)
-    seen: dict[str, KnowledgeDoc] = {item.job_id: item for item in documents}
-    matched = []
+    known = {job.id: job for job in jobs if job_has_knowledge_text(job)}
+    matched: list[KnowledgeDoc] = []
+    seen: set[str] = set()
     for hit in hits:
-        doc = seen.get(hit.job_id)
-        if doc and doc not in matched:
-            matched.append(doc)
+        job = known.get(hit.job_id)
+        if job is None or hit.job_id in seen:
+            continue
+        seen.add(hit.job_id)
+        matched.append(_doc(job))
     return KnowledgeSearchOut(
         query=query,
         job_count=len(matched),
@@ -131,18 +137,19 @@ def retrieve(jobs: list[Job], query: str, limit: int = MAX_CHAT_CHUNKS) -> list[
     query = to_simplified(query).strip()
     if not query:
         return []
-    terms = _terms(query)
-    ranked: list[_Chunk] = []
+    lowered = query.casefold()
+    terms = [term.casefold() for term in _terms(query)]
+    ranked: list[tuple[float, _Chunk]] = []
     for job in jobs:
         if not job_has_knowledge_text(job):
             continue
-        for chunk in _chunks_for_job(job):
-            chunk.score = _score(chunk.text, chunk.title, query, terms)
-            if chunk.score > 0:
-                ranked.append(chunk)
-    ranked.sort(key=lambda item: item.score, reverse=True)
+        for chunk in chunk_index(job):
+            score = _score(chunk, lowered, terms)
+            if score > 0:
+                ranked.append((score, chunk))
+    ranked.sort(key=lambda item: item[0], reverse=True)
     hits: list[KnowledgeHit] = []
-    for chunk in ranked[:limit]:
+    for _rank, chunk in ranked[:limit]:
         kind_label = KIND_LABELS.get(chunk.kind, chunk.kind)
         if chunk.kind == "transcript" and chunk.locator:
             kind_label = "正文"
@@ -307,6 +314,49 @@ def _window_chunk(job_id: str, title: str, window: list[dict]) -> _Chunk:
     )
 
 
+_INDEX_CACHE: OrderedDict[tuple, list[_Chunk]] = OrderedDict()
+_INDEX_LOCK = threading.Lock()
+
+
+def clear_chunk_index() -> None:
+    """丢开切片索引缓存（内容变更后重建，测试之间隔离）。"""
+    with _INDEX_LOCK:
+        _INDEX_CACHE.clear()
+
+
+def _index_key(job: Job) -> tuple:
+    """缓存键：任务 ID + 更新时间 + 正文长度 + 标题，任一变化就重建索引。"""
+    return (
+        job.id,
+        job.updated_at,
+        len(job.transcript_json or ""),
+        len(job.summary_json or ""),
+        job.title or "",
+    )
+
+
+def _hay(chunk: _Chunk) -> str:
+    return to_simplified(f"{chunk.title} {chunk.text}").casefold()
+
+
+def chunk_index(job: Job) -> list[_Chunk]:
+    """整场共用一份切片索引：命中缓存后不再重复解析 JSON、重复做繁简归一化。"""
+    key = _index_key(job)
+    with _INDEX_LOCK:
+        cached = _INDEX_CACHE.get(key)
+        if cached is not None:
+            _INDEX_CACHE.move_to_end(key)
+            return cached
+    chunks = _chunks_for_job(job)
+    for chunk in chunks:
+        chunk.hay = _hay(chunk)
+    with _INDEX_LOCK:
+        _INDEX_CACHE[key] = chunks
+        while len(_INDEX_CACHE) > MAX_INDEX_JOBS:
+            _INDEX_CACHE.popitem(last=False)
+    return chunks
+
+
 def _terms(query: str) -> list[str]:
     terms: list[str] = []
     for raw in re.findall(r"[A-Za-z0-9]{2,}|[\u4e00-\u9fff]+", query):
@@ -330,13 +380,14 @@ def _terms(query: str) -> list[str]:
     return ordered
 
 
-def _score(text: str, title: str, query: str, terms: list[str]) -> float:
-    hay = to_simplified(f"{title} {text}").casefold()
+def _score(chunk: _Chunk, query: str, terms: list[str]) -> float:
+    """只做子串命中统计；`query`、`terms` 与 `chunk.hay` 都已经是 casefold 后的形式。"""
+    hay = chunk.hay or _hay(chunk)
     score = 0.0
-    if query.casefold() in hay:
+    if query in hay:
         score += 8
     for term in terms:
-        if term.casefold() in hay:
+        if term in hay:
             score += 2.5 if len(term) >= 3 else 1.2
     return score
 

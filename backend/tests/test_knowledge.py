@@ -134,3 +134,90 @@ def test_digest_job_is_excluded_from_knowledge():
     )
     assert [item.job_id for item in search_knowledge([manual, source]).documents] == ["job1"]
     assert all(item.job_id != "digest2" for item in retrieve([manual, source], "卖票", limit=5))
+
+
+def test_retrieve_reuses_chunk_index_between_queries(monkeypatch):
+    import app.services.knowledge as knowledge
+
+    job = _job()
+    assert retrieve([job], "卖票的方法是什么", limit=5)
+
+    calls: list[str] = []
+    real = knowledge._chunks_for_job
+
+    def counting(item):
+        calls.append(item.id)
+        return real(item)
+
+    monkeypatch.setattr(knowledge, "_chunks_for_job", counting)
+    hits = retrieve([job], "分时走弱", limit=5)
+    assert calls == []
+    assert hits and hits[0].job_id == "job1"
+
+
+def test_chunk_index_rebuilds_after_transcript_changes():
+    job = _job()
+    assert retrieve([job], "分时走弱", limit=5)
+    job.transcript_json = dumps([{"id": 0, "start": 0, "end": 5, "text": "现在只讲低吸反包"}])
+    assert retrieve([job], "分时走弱", limit=5) == []
+    hits = retrieve([job], "低吸反包", limit=5)
+    assert hits and hits[0].job_id == "job1"
+
+
+def test_chunk_index_rebuilds_after_title_changes():
+    job = _job()
+    hits = retrieve([job], "手机炒股", limit=5)
+    assert hits and hits[0].kind == "title"
+    job.title = "半导体专场"
+    hits = retrieve([job], "半导体专场", limit=5)
+    assert hits and hits[0].kind == "title"
+    assert all(item.kind != "title" for item in retrieve([job], "手机炒股", limit=5))
+
+
+def test_chunk_index_evicts_least_recently_used(monkeypatch):
+    import app.services.knowledge as knowledge
+
+    monkeypatch.setattr(knowledge, "MAX_INDEX_JOBS", 1)
+    first = _job()
+    second = _job()
+    second.id = "job2"
+    assert retrieve([first], "卖票", limit=5)
+
+    calls: list[str] = []
+    real = knowledge._chunks_for_job
+
+    def counting(item):
+        calls.append(item.id)
+        return real(item)
+
+    monkeypatch.setattr(knowledge, "_chunks_for_job", counting)
+    assert retrieve([second], "卖票", limit=5)
+    assert calls == ["job2"]
+    assert retrieve([first], "卖票", limit=5)
+    assert calls == ["job2", "job1"]
+
+
+def test_search_knowledge_builds_docs_only_for_hits(monkeypatch):
+    import app.services.knowledge as knowledge
+
+    jobs = [
+        Job(
+            id=f"job{index}",
+            title=f"课{index}",
+            status="done",
+            transcript_json=dumps([{"id": 0, "start": 0, "end": 5, "text": text}]),
+        )
+        for index, text in enumerate(["讲分时走弱", "讲低吸", "讲卖票"], start=1)
+    ]
+    built: list[str] = []
+    real = knowledge._doc
+
+    def counting(job):
+        built.append(job.id)
+        return real(job)
+
+    monkeypatch.setattr(knowledge, "_doc", counting)
+    out = search_knowledge(jobs, "分时走弱", page=1, page_size=20)
+    assert built == ["job1"]
+    assert [item.job_id for item in out.documents] == ["job1"]
+    assert out.job_count == 1

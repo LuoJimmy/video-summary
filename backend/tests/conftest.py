@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from app.database import Base, get_db
 from app.main import app
+from app.services.knowledge import clear_chunk_index
 from app.services.lexicon import set_lexicon_path, set_lexicon_root
 from app.services.domain import set_domain_path
 from app.services.pipeline import set_pipeline
@@ -45,6 +46,13 @@ def isolated_lexicon(tmp_path):
     set_lexicon_path(None)
     set_lexicon_root(None)
     set_domain_path(None)
+
+
+@pytest.fixture(autouse=True)
+def isolated_knowledge_index():
+    clear_chunk_index()
+    yield
+    clear_chunk_index()
 
 
 @pytest.fixture

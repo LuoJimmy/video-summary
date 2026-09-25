@@ -39,3 +39,11 @@ flowchart LR
 数据库是 `DATA_DIR` 下的 SQLite。新库由 `Base.metadata.create_all` 按模型建表；老库在启动时走 `app/database.py` 的 `migrate_job_columns()`：用 `PRAGMA table_info` 补齐缺的列，再用 `CREATE INDEX IF NOT EXISTS` 补建索引（`JOB_INDEXES`）。
 
 `jobs` 上的索引都对应真实查询：`status`（任务列表按状态筛选）、`coalesce(source_created_at, created_at)` + `created_at` + `id`（任务列表默认按原片发布时间倒序、日期区间筛选：列顺序要和 SQL 里的 `ORDER BY` 完全对齐，否则 SQLite 会退回「扫表 + 临时排序」）、`created_at` + `id`、`updated_at`（知识库分页）、`domain_id` + `updated_at`（知识库按领域收窄）、`schedule_log_id`（定时汇总反查同批任务）。同一索引名定义变了会在启动时自动 `DROP` 重建，所以调整索引不需要手写数据迁移。加新的过滤或排序条件时，同步在 `JOB_INDEXES` 与 `Job.__table_args__` 两处补索引，别让查询退回全表扫描。
+
+## 知识库检索
+
+检索与问答都在进程内完成，没有向量库：`app/services/knowledge.py` 把每个任务切成标题 / 转写窗口 / 综述 / 章节 / 要点等切片，在「繁简归一化 + 小写」后的文本上做子串打分（整句命中 8 分，词命中 2.5 或 1.2 分），取分最高的若干条当依据。
+
+贵的是归一化（`zhconv` 转换），不是匹配本身：本机 83 个任务、325 万字转写的真实库上，一次检索 0.39s 里有 0.32s 花在归一化，纯匹配只要 0.003s。所以 `chunk_index()` 把切片连同归一化文本缓存起来（`MAX_INDEX_JOBS` 为上限、最久未用淘汰、键是 `updated_at` + 正文长度 + 标题），首次检索照旧，之后同一任务的检索只做子串匹配：同库上从 0.39s 降到 0.01~0.02s。转写 / 综述 / 标题一变，缓存键就变，自动重建。
+
+带关键词的搜索只对命中的任务构造 `KnowledgeDoc`（此前先把所有任务都建一遍文档再筛）；列表页不带关键词时仍走 SQL 分页（`updated_at` 索引），不加载全文。
