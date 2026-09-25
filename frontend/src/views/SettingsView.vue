@@ -121,6 +121,7 @@ const askingClearLogs = ref(false);
 const clearingLogs = ref(false);
 const plugins = ref<PluginInfo[]>([]);
 const storage = ref<StorageUsage | null>(null);
+const askingCleanupArchive = ref(false);
 const cleaningArchive = ref(false);
 const archivingWav = ref(false);
 const playQuotaMb = ref<number | string>(0);
@@ -443,8 +444,14 @@ async function loadStorage() {
   }
 }
 
+function askCleanupAudioArchive() {
+  if (!storage.value?.archive_files || cleaningArchive.value) return;
+  askingCleanupArchive.value = true;
+}
+
 async function cleanupAudioArchive() {
   if (cleaningArchive.value) return;
+  askingCleanupArchive.value = false;
   cleaningArchive.value = true;
   try {
     const result = await api.cleanupAudioArchive();
@@ -1909,11 +1916,12 @@ const highlightPhrasesText = computed({
             >
             <Button
               variant="outline"
+              class="text-destructive"
               type="button"
               :disabled="
                 cleaningArchive || archivingWav || !storage?.archive_files
               "
-              @click="cleanupAudioArchive"
+              @click="askCleanupAudioArchive"
               >{{ cleaningArchive ? "清理中…" : "清理音频归档" }}</Button
             >
           </div>
@@ -2063,6 +2071,42 @@ const highlightPhrasesText = computed({
             :disabled="clearingLogs"
             @click="clearScheduleLogs"
             >确认清除</Button
+          >
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog
+      :open="askingCleanupArchive"
+      @update:open="
+        (next: boolean) => {
+          if (!next) askingCleanupArchive = false;
+        }
+      "
+    >
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>清理音频归档</DialogTitle>
+          <DialogDescription>
+            确定清理 {{ storage?.archive_files ?? 0 }} 个音频归档（{{
+              formatSize(storage?.archive_bytes ?? 0)
+            }}）？只删归档文件，不影响已完成的转写和总结；之后重新转写会按原始地址重新抽音。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            type="button"
+            :disabled="cleaningArchive"
+            @click="askingCleanupArchive = false"
+            >取消</Button
+          >
+          <Button
+            variant="destructive"
+            type="button"
+            :disabled="cleaningArchive"
+            @click="cleanupAudioArchive"
+            >确认清理</Button
           >
         </DialogFooter>
       </DialogContent>

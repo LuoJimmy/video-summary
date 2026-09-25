@@ -374,18 +374,27 @@ describe("设置页模型限制说明", () => {
     expect(el.textContent).toContain("上限 512.0 MB");
   });
 
-  it("手动清理音频归档并刷新占用", async () => {
+  it("手动清理音频归档需要二次确认，确认后刷新占用", async () => {
     const el = await mountSettings(localSettings);
     vi.mocked(api.cleanupAudioArchive).mockResolvedValue({
       removed_files: 58,
       freed_bytes: 268_435_456,
       usage: { ...sampleStorage, archive_bytes: 0, archive_files: 0 },
     });
-    const button = [...el.querySelectorAll("button")].find((item) =>
-      item.textContent?.includes("清理音频归档")
+    const button = [...el.querySelectorAll<HTMLButtonElement>("button")].find(
+      (item) => item.textContent?.includes("清理音频归档")
     );
     expect(button).toBeTruthy();
+    expect(button?.classList.contains("text-destructive")).toBe(true);
     button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.cleanupAudioArchive).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("确定清理 58 个音频归档");
+    const confirm = [...document.body.querySelectorAll("button")].find(
+      (item) => item.textContent?.trim() === "确认清理"
+    ) as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    confirm.click();
     await flush();
     expect(api.cleanupAudioArchive).toHaveBeenCalledTimes(1);
     expect(toast.success).toHaveBeenCalledWith(
