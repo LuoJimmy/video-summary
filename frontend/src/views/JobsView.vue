@@ -1365,21 +1365,21 @@ onBeforeUnmount(() => {
           <Button
             variant="outline"
             type="button"
-            :disabled="batchBusy || !selectedCount || !canBatchDigest"
+            v-if="!batchBusy && selectedCount && canBatchDigest"
             @click="batchDigest"
             >汇总总结</Button
           >
           <Button
             variant="outline"
             type="button"
-            :disabled="batchBusy || !selectedCount || !canBatchCancel"
+            v-if="!batchBusy && selectedCount && canBatchCancel"
             @click="batchCancel"
             >取消</Button
           >
           <Button
             variant="outline"
             type="button"
-            :disabled="batchBusy || !selectedCount || !canBatchRetry"
+            v-if="!batchBusy && selectedCount && canBatchRetry"
             @click="batchRetry"
             >重试</Button
           >
@@ -1387,7 +1387,7 @@ onBeforeUnmount(() => {
             variant="outline"
             class="text-destructive"
             type="button"
-            :disabled="batchBusy || !selectedCount"
+            v-if="!batchBusy && selectedCount"
             @click="askBatchDelete"
             >删除</Button
           >
