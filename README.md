@@ -21,7 +21,7 @@
 - `DOWNLOAD_DIR`：音影视/文档存放的路径
 - `MEDIA_DIR`：宿主挂载的路径
 - `TZ`：容器时区，默认 `Asia/Shanghai`；定时任务一律按北京时间判断，不随容器时区变化
-  
+
 方式一：shell安装
 
 ```bash
@@ -201,13 +201,13 @@ npm test
 正式镜像发布在 GitHub Container Registry，标签与仓库 tag 对齐：
 
 ```bash
-docker pull ghcr.io/luojimmy/video-summary:1.2.0
+docker pull ghcr.io/luojimmy/video-summary:1.3.0
 docker run --rm -p 8765:8765 \
   -e DATA_DIR=/data \
   -e DOWNLOAD_DIR=/downloads \
   -v "$PWD/data:/data" \
   -v "$PWD/downloads:/downloads" \
-  ghcr.io/luojimmy/video-summary:1.2.0
+  ghcr.io/luojimmy/video-summary:1.3.0
 ```
 
 也可使用 `ghcr.io/luojimmy/video-summary:latest`。私有仓库拉取前先 `docker login ghcr.io`。

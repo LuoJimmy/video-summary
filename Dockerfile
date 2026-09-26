@@ -14,7 +14,7 @@ LABEL org.opencontainers.image.title="Video Summary" \
       org.opencontainers.image.description="本地视频/流媒体转写与 AI 时间轴总结工作台" \
       org.opencontainers.image.source="https://github.com/LuoJimmy/video-summary" \
       org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
-      org.opencontainers.image.version="1.2.0"
+      org.opencontainers.image.version="1.3.0"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg libgomp1 ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
