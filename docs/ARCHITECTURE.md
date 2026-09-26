@@ -48,11 +48,11 @@ flowchart LR
 
 ## 任务队列
 
-转写集中在 `app/services/jobqueue.py` 的队伍里按先进先出跑：工作线程按上限（`MAX_WORKERS = 8`）起，同时真正跑几个由「并行路数」控制——本机转写（SenseVoice / faster-whisper / 没配 Key 或指向本机地址的接口，看 `transcribe.is_local_transcribe()`）固定 1 路，云端接口按设置页「并行转写数」（`transcribe_concurrency`，0 = 自动，取 `TRANSCRIBE_CONCURRENCY`，默认 3 路）。并行路数在启动（`jobqueue.configure()`）和保存设置（`PUT /api/settings` 改了转写模型 / Key / Base URL / 并行数时 `jobqueue.refresh_concurrency()`）两处重算。任务创建入口（`POST /api/jobs`、批量创建、`/api/jobs/digest`、定时批次）只负责把任务排进队列就返回，轮不到的任务停在 `stage=queued`（界面显示「排队中」），不会没限制地一起抢 CPU、把接口打到限流。
+转写集中在 `app/services/jobqueue.py` 的队伍里按先进先出跑：工作线程按上限（`MAX_WORKERS = 8`）起，同时真正跑几个由「并行路数」控制——本机转写（SenseVoice / faster-whisper / 没配 Key 或指向本机地址的接口，看 `transcribe.is_local_transcribe()`）固定 1 路，云端接口按设置页「并行转写数」（`transcribe_concurrency`，0 = 自动，取 `TRANSCRIBE_CONCURRENCY`，默认 3 路）。并行路数在启动（`jobqueue.configure()`）和保存设置（`PUT /api/settings` 改了转写模型 / Key / Base URL / 并行数时 `jobqueue.refresh_concurrency()`）两处重算。任务创建入口（`POST /api/jobs`、批量创建、`/api/jobs/digest`、定时批次）只负责把任务排进队列就返回，轮不到的任务停在 `stage=queued`（界面显示「排队中」），不会没限制地一起抢 CPU、把接口打到限流。本机转写还要跨进程排队：跑本机任务前会先拿一把 `fcntl.flock` 文件锁（`settings.transcribe_lock_path()`，默认数据目录下的 `transcribe.lock`，测试里由 `TRANSCRIBE_LOCK_FILE` 指到临时目录），同一台机器上哪怕活着两个后端进程（`--reload` 换代时旧子进程还在跑原生转写没退干净、或手动起了两个）也只有一个在真正转写，抢不到锁的那个排队等；云端按「并行转写数」并行，不受这把锁影响。
 
 定时任务触发创建的那一批按任务逐个排队，汇总总结单独占队列里的一项（用 `depends_on` 指向这批任务），整批跑完才轮到它。
 
-轮到某个任务时才由队列写 `started_at`（`stamp_job_start`），所以排队等待的时间不算进任务耗时（界面在 `stage=queued` 时同样不显示「已用时间」，任务列表也只显示「排队中」）；任务已经被取消或删掉时只跳过这一步，执行本身仍交给流水线按取消标记处理。排队中取消 / 删除会调用 `forget()` 把任务从队列摘掉（等它的汇总总结也一起放行，不会干等）；进程退出时没跑完的任务留在库里保持 `pending`，下次启动由 `requeue_pending()` 按创建时间重新排队。`settings.job_queue`（`JOB_QUEUE=0`）只为测试关掉这个线程——关掉后任务会一直停在「排队中」。
+轮到某个任务时才由队列写 `started_at`（`stamp_job_start`），所以排队等待的时间不算进任务耗时（界面在 `stage=queued` 时同样不显示「已用时间」，任务列表也只显示「排队中」）；任务已经被取消或删掉时只跳过这一步，执行本身仍交给流水线按取消标记处理。排队中取消 / 删除会调用 `forget()` 把任务从队列摘掉（等它的汇总总结也一起放行，不会干等）；进程退出时没跑完的任务留在库里保持 `pending`，下次启动由 `requeue_pending()` 按创建时间重新排队；被强杀（`--reload` 换代 / 崩溃）来不及退干净的任务会留在 `running`，启动时由 `reclaim_running()` 认领：`Job.owner_pid` 记的是开始跑它的进程（`stamp_job_start()` 里写），那个进程已经没了（或就是本进程重启前的自己）才改回 `pending` 重新排队，别的进程还活着就不动它——那说明它真的还在跑。`settings.job_queue`（`JOB_QUEUE=0`）只为测试关掉这个线程——关掉后任务会一直停在「排队中」。
 
 ## 知识库检索
 

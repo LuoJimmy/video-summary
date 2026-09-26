@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -134,6 +135,8 @@ class Job(Base):
     source_path: Mapped[str] = mapped_column(Text, default="")
     timing_json: Mapped[str] = mapped_column(Text, default="")
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # 开始跑这个任务的进程号（`stamp_job_start()` 里写）：进程被强杀后靠它判断「转写中」是不是没人跑了
+    owner_pid: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     source_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     summarize_document: Mapped[bool] = mapped_column(Boolean, default=False)
     schedule_log_id: Mapped[str] = mapped_column(String(32), default="")
@@ -153,4 +156,6 @@ class KnowledgeConversation(Base):
 
 
 def stamp_job_start(job: Job) -> None:
+    """记下开始时间和跑它的进程（进程被强杀后，启动时靠 owner_pid 认出没人跑的「转写中」）。"""
     job.started_at = utcnow()
+    job.owner_pid = os.getpid()

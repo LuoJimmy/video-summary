@@ -31,6 +31,7 @@ async def lifespan(_: FastAPI):
         transcribe_model = app_settings.transcribe_model
         if settings.job_queue:
             jobqueue.configure(app_settings)  # 本机转写 1 路 / 云端按「并行转写数」并行
+            jobqueue.reclaim_running(db)  # 上个进程被强杀留下的「转写中」放回队列，别一直挂着
             jobqueue.requeue_pending(db)
     finally:
         db.close()

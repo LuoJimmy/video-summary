@@ -1,10 +1,13 @@
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ["PREFETCH_SENSEVOICE"] = "0"
 os.environ["SCHEDULE_LOOP"] = "0"
 os.environ["JOB_QUEUE"] = "0"
+# 本机转写的跨进程闸门指到临时目录：测试别和本机正跑着的开发服务器抢同一把锁
+os.environ["TRANSCRIBE_LOCK_FILE"] = str(Path(tempfile.gettempdir()) / f"video-summary-test-{os.getpid()}.lock")
 
 import pytest
 from fastapi.testclient import TestClient

@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # 转写队列：批量创建的任务排队跑，本机转写一个一个来，云端接口按 transcribe_concurrency 并行。
     # 关掉后队列工作线程不启动，任务会一直停在「排队中」（测试里用它避免动到真实数据）。
     job_queue: bool = True
+    # 本机转写的跨进程闸门（flock 文件锁）：同一台机器上就算活着两个后端进程（--reload 换子进程时
+    # 旧子进程还在跑原生转写、或手动起了两个），真正在转写的也只会有 1 个。
+    # 留空 = 数据目录下的 transcribe.lock；测试里指到临时目录，免得和本机正跑着的应用抢锁。
+    transcribe_lock_file: str = ""
 
     def uploads_path(self) -> Path:
         path = Path(self.download_dir).expanduser() if self.download_dir.strip() else (self.data_dir / "uploads")
@@ -60,6 +64,12 @@ class Settings(BaseSettings):
         path = self.data_dir / "models"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def transcribe_lock_path(self) -> Path:
+        """本机转写的跨进程闸门文件（`jobqueue` 用它做 flock）。"""
+        if self.transcribe_lock_file.strip():
+            return Path(self.transcribe_lock_file).expanduser()
+        return self.data_dir / "transcribe.lock"
 
     def resolved_static_dir(self) -> Path | None:
         if not self.static_dir.strip():

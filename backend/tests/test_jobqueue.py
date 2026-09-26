@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 from datetime import datetime, timedelta
@@ -318,3 +319,92 @@ def test_cancel_queued_job_drops_it_from_queue(client, queue):
     cancelled = client.post(f"/api/jobs/{created['id']}/cancel").json()
     assert cancelled["status"] == "cancelled"
     assert created["id"] not in queue.queued_job_ids()
+
+
+def _wait_started(pipeline: RecordingPipeline, count: int) -> None:
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if len([item for item in pipeline.events if item[0] == "start"]) >= count:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"队列没把任务跑起来：{pipeline.events}")
+
+
+def test_two_retry_batches_share_the_same_queue(client, queue, queue_db, monkeypatch):
+    """两批多选重试也要排在同一条队里：后一批提交时前一批还在转写，就得等它跑完（本机固定 1 路）。"""
+    first = [_job(queue_db, f"第一批{index}", status="failed", stage="failed") for index in range(2)]
+    pipeline = RecordingPipeline(delay=0.2)
+    monkeypatch.setattr(jobqueue, "get_pipeline", lambda: pipeline)
+    queue.start_worker()
+    assert client.post("/api/jobs/batch", json={"action": "retry", "ids": [job.id for job in first]}).status_code == 200
+    _wait_started(pipeline, 1)  # 第一批已经在转写了
+    second = [_job(queue_db, f"第二批{index}", status="failed", stage="failed") for index in range(2)]
+    assert client.post("/api/jobs/batch", json={"action": "retry", "ids": [job.id for job in second]}).status_code == 200
+    # 第二批提交进来时，第一批还没跑完：第二批只在队列里等着，不该同时开跑
+    assert pipeline.peak == 1
+    _wait_done(pipeline, 4)
+    assert pipeline.peak == 1  # 全程都只有一个在跑
+    assert [item[1] for item in pipeline.events if item[0] == "start"] == [
+        job.id for job in first + second
+    ]  # 先来后到：第一批跑完才轮到第二批
+    assert queue.queued_job_ids() == []
+
+
+def test_local_transcribe_waits_for_the_gate_held_by_another_process(queue, queue_db, monkeypatch):
+    """整台机器只允许一个本机转写：别的进程（--reload 的旧子进程等）占着闸门时得等着，不许抢。"""
+    if jobqueue.fcntl is None:
+        pytest.skip("这个平台没有 flock")
+    pipeline = RecordingPipeline()
+    monkeypatch.setattr(jobqueue, "get_pipeline", lambda: pipeline)
+    held = jobqueue._take_gate()  # 假装另一个后端进程正在跑本机转写
+    assert held is not None and held >= 0
+    job = _job(queue_db, "等闸门")
+    queue.enqueue_job(job.id)
+    queue.start_worker()
+    time.sleep(0.3)
+    assert pipeline.events == []  # 闸门没放，任务跑不起来
+    assert _read(queue_db, job.id).status == "pending"  # 等着的时候也不算开始
+    jobqueue._release_gate(held)
+    _wait_done(pipeline, 1)
+    assert pipeline.events == [("start", job.id), ("end", job.id)]
+
+
+def test_cloud_parallel_ignores_the_gate(queue, queue_db, monkeypatch):
+    """闸门只管本机转写：云端接口按「并行转写数」并行，不被别的进程的锁挡住。"""
+    if jobqueue.fcntl is None:
+        pytest.skip("这个平台没有 flock")
+    queue.set_concurrency(3)
+    pipeline = RecordingPipeline(delay=0.2)
+    monkeypatch.setattr(jobqueue, "get_pipeline", lambda: pipeline)
+    held = jobqueue._take_gate()
+    assert held is not None and held >= 0
+    try:
+        for index in range(2):
+            queue.enqueue_job(_job(queue_db, f"云端{index}").id)
+        queue.start_worker()
+        _wait_done(pipeline, 2)
+    finally:
+        jobqueue._release_gate(held)
+    assert pipeline.peak == 2  # 两路并行，没被闸门挡住
+
+
+def test_startup_reclaims_running_jobs_left_by_a_dead_process(queue, queue_db):
+    """上个进程被强杀留下的「转写中」：启动时放回队列重新排队，不再永远挂着。"""
+    stale = _job(queue_db, "被强杀了", status="running", stage="transcribing")
+    stale.owner_pid = 3_000_000  # 系统里用不到的进程号
+    stale.progress = 50
+    queue_db.commit()
+    assert queue.reclaim_running(queue_db) == 1
+    fresh = _read(queue_db, stale.id)
+    assert (fresh.status, fresh.stage, fresh.progress, fresh.owner_pid) == ("pending", "queued", 0, None)
+    assert queue.requeue_pending(queue_db) == 1
+    assert queue.queued_job_ids() == [stale.id]
+
+
+def test_startup_keeps_running_jobs_owned_by_a_live_process(queue, queue_db):
+    """跑它的进程还活着就别动：那说明任务真的还在跑，抢回来会变成两个任务一起处理同一段音频。"""
+    running = _job(queue_db, "别的进程在跑", status="running", stage="transcribing")
+    running.owner_pid = os.getppid()
+    queue_db.commit()
+    assert queue.reclaim_running(queue_db) == 0
+    assert _read(queue_db, running.id).status == "running"
