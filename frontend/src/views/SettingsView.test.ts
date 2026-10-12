@@ -481,7 +481,9 @@ describe("设置页模型限制说明", () => {
     expect(el.textContent).toContain("B站早班");
     expect(el.querySelector('[aria-label="新增定时配置"]')).toBeTruthy();
     expect(el.querySelector('[aria-label="删除当前配置"]')).toBeTruthy();
-    expect(el.textContent).toContain("展开站点与汇总");
+    expect(el.textContent).not.toContain("展开站点与汇总");
+    expect(el.textContent).not.toContain("收起站点与汇总");
+    expect(el.textContent).toContain("生成汇总总结");
     expect(el.textContent).not.toContain("从哪天开始");
     expect(el.textContent).toContain("当天发布");
     expect(el.textContent).toContain("多个 UP");
@@ -489,15 +491,26 @@ describe("设置页模型限制说明", () => {
     expect(el.textContent).toContain("已跳过");
     expect(el.querySelector(".schedule-log-list li.is-skipped")).toBeTruthy();
 
-    const detailsBtn = [...el.querySelectorAll("button")].find((item) =>
-      item.textContent?.includes("展开站点与汇总")
+    const siteCards = [...el.querySelectorAll(".schedule-site")];
+    expect(siteCards.map((item) => item.textContent || "").join("")).toContain(
+      "小鹅通"
     );
-    expect(detailsBtn).toBeTruthy();
-    detailsBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await flush();
-    expect(el.textContent).toContain("收起站点与汇总");
-    expect(el.textContent).toContain("生成汇总总结");
+    expect(
+      siteCards.map((item) => item.textContent || "").join("")
+    ).not.toContain("加菲财经");
     expect(el.querySelector(".schedule-catalog")).toBeTruthy();
+    expect(el.querySelector('[aria-label="添加站点"]')).toBeTruthy();
+    expect(el.querySelector('[aria-label="移除小鹅通"]')).toBeTruthy();
+
+    const addSiteBtn = el.querySelector(
+      '[aria-label="添加站点"]'
+    ) as HTMLButtonElement;
+    expect(addSiteBtn.querySelector("svg")).toBeTruthy();
+    expect(addSiteBtn.textContent?.trim()).toBe("");
+    addSiteBtn.click();
+    await flush();
+    expect(document.body.textContent).toContain("可以多选");
+    expect(document.body.textContent).toContain("加菲财经/约牛");
 
     vi.mocked(api.updateScheduleRule).mockResolvedValue(sampleRule);
     const saveRuleBtn = [...el.querySelectorAll("button")].find((item) =>

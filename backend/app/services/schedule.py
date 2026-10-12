@@ -243,6 +243,8 @@ def rule_out(db: Session, rule: ScheduleRule) -> ScheduleRuleOut:
     sites: list[ScheduleRuleSiteOut] = []
     for site in _schedulable_sites(db):
         row = configs.get(site.id)
+        if row is None or not row.enabled:
+            continue
         sites.append(
             ScheduleRuleSiteOut(
                 site_id=site.id,
@@ -286,7 +288,7 @@ def list_rules(db: Session) -> list[ScheduleRuleOut]:
 
 
 def list_schedule_sites(db: Session) -> list[ScheduleRuleSiteOut]:
-    """可参与定时的站点清单，供界面新建配置时勾选。"""
+    """可参与定时的站点清单，供界面往配置里添加站点。"""
     return [
         ScheduleRuleSiteOut(
             site_id=site.id,
@@ -324,10 +326,12 @@ def save_rule(db: Session, payload: ScheduleRuleIn, rule_id: str | None = None) 
         if site is None:
             raise ValueError("只能为小鹅通、约牛或 B 站配置定时任务")
         catalog_id = (item.catalog_id or "").strip()
-        if item.enabled and site.adapter in {"xiaoe", "bilibili"} and not split_catalog_ids(catalog_id):
+        if not item.enabled:
+            continue
+        if site.adapter in {"xiaoe", "bilibili"} and not split_catalog_ids(catalog_id):
             label = "小鹅通店铺 app_id" if site.adapter == "xiaoe" else "B 站 UP 的 mid"
-            raise ValueError(f"{site.name} 已启用定时，请填写{label}，多个可用逗号分隔")
-        normalized.append((item.site_id, bool(item.enabled), catalog_id))
+            raise ValueError(f"{site.name} 需要填写{label}，多个可用逗号分隔")
+        normalized.append((item.site_id, True, catalog_id))
     if row is None:
         row = ScheduleRule(name=(payload.name or "").strip() or "定时配置")
         db.add(row)
@@ -340,6 +344,7 @@ def save_rule(db: Session, payload: ScheduleRuleIn, rule_id: str | None = None) 
     row.domain_id = (payload.domain_id or "").strip()
     row.digest_enabled = bool(payload.digest_enabled)
     current = _rule_sites(db, row.id)
+    kept = {site_id for site_id, _, _ in normalized}
     for site_id, enabled, catalog_id in normalized:
         config = current.get(site_id)
         if config is None:
@@ -347,6 +352,9 @@ def save_rule(db: Session, payload: ScheduleRuleIn, rule_id: str | None = None) 
             db.add(config)
         config.enabled = enabled
         config.catalog_id = catalog_id
+    for site_id, config in current.items():
+        if site_id not in kept:
+            db.delete(config)
     db.commit()
     db.refresh(row)
     wake_scheduler()

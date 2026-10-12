@@ -564,9 +564,30 @@ h3 {
   gap: var(--space-3);
   margin-top: var(--space-4);
 }
+.schedule-sites-label {
+  font-size: 0.875rem;
+  font-weight: 650;
+  color: var(--strong);
+}
+.schedule-site-picker {
+  display: grid;
+  gap: var(--space-3);
+  max-height: 16rem;
+  overflow-y: auto;
+}
 .schedule-site {
   display: grid;
   gap: var(--space-2);
+}
+.schedule-site-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: fit-content;
+}
+.schedule-site-head span {
+  font-weight: 650;
+  color: var(--strong);
 }
 .schedule-catalog {
   min-height: 4.5rem;

@@ -108,7 +108,8 @@ const ruleDraft = ref<ScheduleRuleInput>({
   sites: [],
 });
 const selectedRuleId = ref("");
-const showRuleDetails = ref(false);
+const addingSites = ref(false);
+const sitesToAdd = ref<string[]>([]);
 const savingRule = ref(false);
 const deletingRule = ref<ScheduleRule | null>(null);
 const deletingRuleBusy = ref(false);
@@ -581,9 +582,13 @@ async function uninstallDocPlugin() {
   }
 }
 
+const availableScheduleSites = computed(() => {
+  const used = new Set(ruleDraft.value.sites.map((item) => item.site_id));
+  return scheduleSites.value.filter((item) => !used.has(item.site_id));
+});
+
 function newRuleDraft(): ScheduleRuleInput {
   const fallback = scheduleRules.value[0];
-  const source = fallback ? fallback.sites : scheduleSites.value;
   return {
     name: `定时配置 ${scheduleRules.value.length + 1}`,
     enabled: true,
@@ -592,16 +597,13 @@ function newRuleDraft(): ScheduleRuleInput {
     max_jobs: fallback?.max_jobs ?? 5,
     domain_id: fallback?.domain_id ?? "a-share",
     digest_enabled: fallback?.digest_enabled ?? true,
-    sites: source.map((item) => ({
-      ...item,
-      enabled: false,
-      catalog_id: "",
-    })),
+    sites: [],
   };
 }
 
 function applyScheduleRule(rule: ScheduleRule) {
   selectedRuleId.value = rule.id;
+  closeAddScheduleSites();
   ruleDraft.value = {
     name: rule.name,
     enabled: rule.enabled,
@@ -610,8 +612,53 @@ function applyScheduleRule(rule: ScheduleRule) {
     max_jobs: rule.max_jobs,
     domain_id: rule.domain_id,
     digest_enabled: rule.digest_enabled,
-    sites: rule.sites.map((item) => ({ ...item })),
+    sites: rule.sites
+      .filter((item) => item.enabled)
+      .map((item) => ({ ...item })),
   };
+}
+
+function openAddScheduleSites() {
+  if (savingRule.value || !availableScheduleSites.value.length) return;
+  sitesToAdd.value = [];
+  addingSites.value = true;
+}
+
+function closeAddScheduleSites() {
+  addingSites.value = false;
+  sitesToAdd.value = [];
+}
+
+function toggleSiteToAdd(siteId: string, checked: boolean | "indeterminate") {
+  const selected = new Set(sitesToAdd.value);
+  if (checked === true) selected.add(siteId);
+  else selected.delete(siteId);
+  sitesToAdd.value = availableScheduleSites.value
+    .map((item) => item.site_id)
+    .filter((id) => selected.has(id));
+}
+
+function confirmAddScheduleSites() {
+  const draft = ruleDraft.value;
+  if (!draft || savingRule.value || !sitesToAdd.value.length) return;
+  const chosen = new Set(sitesToAdd.value);
+  const existing = new Set(draft.sites.map((item) => item.site_id));
+  const next = scheduleSites.value.filter(
+    (item) => chosen.has(item.site_id) && !existing.has(item.site_id)
+  );
+  if (next.length) {
+    draft.sites = [
+      ...draft.sites,
+      ...next.map((item) => ({ ...item, enabled: true, catalog_id: "" })),
+    ];
+  }
+  closeAddScheduleSites();
+}
+
+function removeScheduleSite(siteId: string) {
+  const draft = ruleDraft.value;
+  if (!draft) return;
+  draft.sites = draft.sites.filter((item) => item.site_id !== siteId);
 }
 
 const ruleCronHint = computed(() => {
@@ -643,8 +690,8 @@ const ruleSelect = computed({
 function addScheduleRule() {
   if (savingRule.value) return;
   selectedRuleId.value = "";
+  closeAddScheduleSites();
   ruleDraft.value = newRuleDraft();
-  showRuleDetails.value = true;
 }
 
 function askDeleteScheduleRule() {
@@ -1557,11 +1604,11 @@ const highlightPhrasesText = computed({
           8 * * 1-5
           表示只在工作日）。定时扫描只拉取上一次触发之后发布的稿件，不会用更早的稿件凑满数量；手动执行则只看当天发布的内容。B
           站多个 UP、小鹅通多个店铺：可在内容源里用逗号或换行填写多个 mid /
-          app_id；也可以到「站点」页再添加一条同类型站点，分别命名、单独开关。
+          app_id；也可以到「站点」页再添加一条同类型站点，分别命名，再加到这条定时配置里。
         </InfoTip>
       </div>
       <div class="grid two">
-        <div class="field field-md">
+        <div class="field field-sm">
           <div class="flex items-center gap-1">
             <Label>定时配置</Label>
             <Button
@@ -1603,7 +1650,7 @@ const highlightPhrasesText = computed({
             </SelectContent>
           </Select>
         </div>
-        <div class="field field-md">
+        <div class="field field-sm">
           <Label>配置名称</Label>
           <Input v-model="ruleDraft.name" placeholder="例如：B站早班" />
         </div>
@@ -1638,52 +1685,64 @@ const highlightPhrasesText = computed({
           aria-label="cron 表达式"
           placeholder="例如 0 8,18 * * *（每天 8 点、18 点），0 8 * * 1-5（工作日 8 点）"
         />
-        <p class="msg mt-1">{{ ruleCronHint }}</p>
+        <p class="msg mt-1 text-sm">{{ ruleCronHint }}</p>
       </div>
-      <div class="row mt-3.5">
-        <Button
-          variant="ghost"
-          type="button"
-          class="h-auto px-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
-          @click="showRuleDetails = !showRuleDetails"
-        >
-          <ChevronRight
-            class="size-4 transition-transform"
-            :class="{ 'rotate-90': showRuleDetails }"
-          />
-          {{ showRuleDetails ? "收起站点与汇总" : "展开站点与汇总" }}
-        </Button>
+      <div class="check-block">
+        <label class="check">
+          <Checkbox v-model="ruleDraft.enabled" />
+          <span>启用这条配置（关掉后不会自动扫描）</span>
+        </label>
+        <label class="check">
+          <Checkbox v-model="ruleDraft.digest_enabled" />
+          <span>生成汇总总结</span>
+        </label>
       </div>
-      <div v-show="showRuleDetails">
-        <div class="check-block">
-          <label class="check">
-            <Checkbox v-model="ruleDraft.enabled" />
-            <span>启用这条配置（关掉后不会自动扫描）</span>
-          </label>
-          <label class="check">
-            <Checkbox v-model="ruleDraft.digest_enabled" />
-            <span>生成汇总总结</span>
-          </label>
-        </div>
-        <div v-if="ruleDraft.sites.length" class="schedule-sites">
-          <div
-            v-for="site in ruleDraft.sites"
-            :key="site.site_id"
-            class="schedule-site"
+      <div class="schedule-sites">
+        <div class="flex items-center gap-1">
+          <span class="schedule-sites-label">添加站点</span>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            class="icon-btn disabled:pointer-events-auto disabled:cursor-not-allowed"
+            type="button"
+            aria-label="添加站点"
+            :title="availableScheduleSites.length ? '添加站点' : '站点都已添加'"
+            :disabled="savingRule || !availableScheduleSites.length"
+            @click="openAddScheduleSites"
           >
-            <label class="check">
-              <Checkbox v-model="site.enabled" />
-              <span>{{ site.name }}</span>
-            </label>
-            <Textarea
-              v-model="site.catalog_id"
-              :placeholder="site.catalog_hint"
-              :aria-label="`${site.name}内容源`"
-              class="schedule-catalog"
-            />
-          </div>
+            <Plus class="size-4" />
+          </Button>
         </div>
-        <p v-else class="msg mt-3">暂无可定时的站点。</p>
+        <div
+          v-for="site in ruleDraft.sites"
+          :key="site.site_id"
+          class="schedule-site"
+        >
+          <div class="schedule-site-head text-sm">
+            <span>{{ site.name }}</span>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="icon-btn text-destructive disabled:pointer-events-auto disabled:cursor-not-allowed"
+              type="button"
+              :aria-label="`移除${site.name}`"
+              title="移除站点"
+              :disabled="savingRule"
+              @click="removeScheduleSite(site.site_id)"
+            >
+              <Trash2 class="size-4" />
+            </Button>
+          </div>
+          <Textarea
+            v-model="site.catalog_id"
+            :placeholder="site.catalog_hint"
+            :aria-label="`${site.name}内容源`"
+            class="schedule-catalog"
+          />
+        </div>
+        <p v-if="!ruleDraft.sites.length" class="msg">
+          还没有添加站点。点「添加站点」旁的加号选择。
+        </p>
       </div>
       <div class="row mt-3.5">
         <Button type="button" :disabled="savingRule" @click="saveScheduleRule"
@@ -1693,14 +1752,20 @@ const highlightPhrasesText = computed({
           variant="outline"
           type="button"
           :disabled="!selectedRuleId || runningRuleId === selectedRuleId"
-          :aria-busy="runningRuleId === selectedRuleId"
+          :aria-busy="
+            Boolean(runningRuleId) && runningRuleId === selectedRuleId
+          "
           @click="runRuleNow"
         >
           <Loader2
-            v-if="runningRuleId === selectedRuleId"
+            v-if="runningRuleId && runningRuleId === selectedRuleId"
             class="size-4 animate-spin"
           />
-          {{ runningRuleId === selectedRuleId ? "正在扫描…" : "立即执行这条" }}
+          {{
+            runningRuleId && runningRuleId === selectedRuleId
+              ? "正在扫描…"
+              : "立即执行这条"
+          }}
         </Button>
       </div>
       <div class="schedule-logs">
@@ -1969,6 +2034,51 @@ const highlightPhrasesText = computed({
         </div>
       </div>
     </section>
+
+    <Dialog
+      :open="addingSites"
+      @update:open="
+        (next: boolean) => {
+          if (!next) closeAddScheduleSites();
+        }
+      "
+    >
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>添加站点</DialogTitle>
+          <DialogDescription
+            >选择要加入这条定时配置的站点，可以多选。</DialogDescription
+          >
+        </DialogHeader>
+        <div v-if="availableScheduleSites.length" class="schedule-site-picker">
+          <label
+            v-for="site in availableScheduleSites"
+            :key="site.site_id"
+            class="check"
+          >
+            <Checkbox
+              :model-value="sitesToAdd.includes(site.site_id)"
+              @update:model-value="
+                (checked) => toggleSiteToAdd(site.site_id, checked)
+              "
+            />
+            <span>{{ site.name }}</span>
+          </label>
+        </div>
+        <p v-else class="msg">站点都已添加。</p>
+        <DialogFooter>
+          <Button variant="outline" type="button" @click="closeAddScheduleSites"
+            >取消</Button
+          >
+          <Button
+            type="button"
+            :disabled="!sitesToAdd.length"
+            @click="confirmAddScheduleSites"
+            >添加</Button
+          >
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog
       :open="askingDeletePreset"

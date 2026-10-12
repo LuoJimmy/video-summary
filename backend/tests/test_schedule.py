@@ -70,9 +70,9 @@ def test_schedule_default_and_validation(client):
     assert rule["time"] == "07:30"
     assert rule["max_jobs"] == 8
     assert rule["digest_enabled"] is True
-    adapters = {item["adapter"] for item in rule["sites"]}
-    assert adapters == {"xiaoe", "yueniu", "bilibili"}
-    assert "generic" not in adapters
+    assert [item["adapter"] for item in rule["sites"]] == ["xiaoe"]
+    catalog = client.get("/api/schedule/sites").json()
+    assert {item["adapter"] for item in catalog} == {"xiaoe", "yueniu", "bilibili"}
     listed = client.get("/api/schedule/rules").json()
     assert [item["id"] for item in listed] == [rule["id"]]
 
@@ -551,7 +551,7 @@ def test_cannot_delete_last_xiaoe_site(client):
     assert "小鹅通" in resp.text
 
 
-def test_extra_xiaoe_site_appears_in_schedule(client):
+def test_extra_xiaoe_site_can_be_added_to_schedule(client):
     sites = _sites_by_adapter(client)
     xiaoe = sites["xiaoe"]
     created = client.post(
@@ -568,10 +568,77 @@ def test_extra_xiaoe_site_appears_in_schedule(client):
         },
     )
     assert created.status_code == 200, created.text
-    _, rule = _enable_xiaoe(client)
-    names = [item["name"] for item in rule["sites"] if item["adapter"] == "xiaoe"]
-    assert "小鹅通" in names
-    assert "启富课堂" in names
+    extra = created.json()
+    saved = client.post(
+        "/api/schedule/rules",
+        json={
+            "name": "早班",
+            "enabled": True,
+            "time": "08:00",
+            "max_jobs": 5,
+            "sites": [{"site_id": xiaoe["id"], "enabled": True, "catalog_id": "appdemo"}],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    rule = saved.json()
+    assert [item["name"] for item in rule["sites"]] == ["小鹅通"]
+    catalog = {item["name"] for item in client.get("/api/schedule/sites").json()}
+    assert "小鹅通" in catalog
+    assert "启富课堂" in catalog
+    added = client.put(
+        f"/api/schedule/rules/{rule['id']}",
+        json={
+            "name": rule["name"],
+            "enabled": True,
+            "time": "08:00",
+            "max_jobs": 5,
+            "sites": [
+                {"site_id": xiaoe["id"], "enabled": True, "catalog_id": "appdemo"},
+                {"site_id": extra["id"], "enabled": True, "catalog_id": "appqifu"},
+            ],
+        },
+    )
+    assert added.status_code == 200, added.text
+    added_names = [item["name"] for item in added.json()["sites"] if item["adapter"] == "xiaoe"]
+    assert added_names == ["小鹅通", "启富课堂"]
+
+
+def test_removing_site_from_schedule_rule(client):
+    sites = _sites_by_adapter(client)
+    created = client.post(
+        "/api/schedule/rules",
+        json={
+            "name": "两站",
+            "enabled": True,
+            "time": "08:00",
+            "max_jobs": 5,
+            "sites": [
+                {"site_id": sites["xiaoe"]["id"], "enabled": True, "catalog_id": "appdemo"},
+                {"site_id": sites["yueniu"]["id"], "enabled": True, "catalog_id": "author-1"},
+            ],
+        },
+    )
+    assert created.status_code == 200, created.text
+    rule = created.json()
+    assert {item["adapter"] for item in rule["sites"]} == {"xiaoe", "yueniu"}
+    updated = client.put(
+        f"/api/schedule/rules/{rule['id']}",
+        json={
+            "name": "两站",
+            "enabled": True,
+            "time": "08:00",
+            "max_jobs": 5,
+            "sites": [
+                {"site_id": sites["xiaoe"]["id"], "enabled": True, "catalog_id": "appdemo"},
+                {"site_id": sites["yueniu"]["id"], "enabled": False, "catalog_id": "author-1"},
+            ],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert [item["adapter"] for item in updated.json()["sites"]] == ["xiaoe"]
+    listed = client.get("/api/schedule/rules").json()
+    saved = next(item for item in listed if item["id"] == rule["id"])
+    assert [item["adapter"] for item in saved["sites"]] == ["xiaoe"]
 
 
 def test_seconds_until_tick_and_missed_run(db_session):
