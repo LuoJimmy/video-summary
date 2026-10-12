@@ -53,8 +53,8 @@ describe("parseChangelog", () => {
 
   it("仓库更新日志最新版本可用", () => {
     const releases = parseChangelog(changelogMarkdown);
-    expect(releases[0]?.version).toBe("1.3.0");
-    expect(releases[0]?.date).toBe("2026-09-24");
+    expect(releases[0]?.version).toBe("1.3.1");
+    expect(releases[0]?.date).toBe("2026-10-12");
     expect(releases[0]?.sections.some((item) => item.items.length > 0)).toBe(
       true
     );
