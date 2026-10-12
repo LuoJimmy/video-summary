@@ -1178,7 +1178,7 @@ const highlightPhrasesText = computed({
           </InfoTip>
         </div>
         <Label>一键套用总结模型</Label>
-        <div class="row mb-3.5">
+        <div class="row mb-3.5 row-model-quick-apply">
           <Button
             variant="outline"
             type="button"

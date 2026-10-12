@@ -405,7 +405,7 @@ h3 {
   background: color-mix(in srgb, var(--bad) 16%, transparent);
 }
 .sub {
-    font-size: var(--text-sm);
+  font-size: var(--text-sm);
   color: var(--muted);
   margin-bottom: var(--space-6);
   overflow-wrap: anywhere;
@@ -1925,6 +1925,10 @@ label.check small {
   .row [data-slot="button"] {
     min-height: 2.75rem;
     flex: 1 1 calc(50% - 0.5rem);
+  }
+  .row-model-quick-apply {
+    flex-direction: column;
+    align-items: start;
   }
   .upload-picker [data-slot="button"] {
     min-height: 2.75rem;
