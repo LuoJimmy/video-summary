@@ -892,6 +892,27 @@ def _run_due_ticks(trigger: str = "cron", now: datetime | None = None) -> list[s
     return pending
 
 
+def _same_minute(left: datetime, right: datetime) -> bool:
+    return left.replace(second=0, microsecond=0) == right.replace(second=0, microsecond=0)
+
+
+def _dispatch_due_ticks(trigger: str = "cron") -> list[str]:
+    """到点就跑。检查若跨过了触发分钟，用结束时刻再判一次。
+
+    长睡眠可能在触发点前零点几毫秒醒来。第一次检查的时间戳还停在上一分钟，
+    会判成未到点；等这次检查做完，时钟已经进入触发分钟。若这时直接按
+    next_after 排下一次睡眠，会跳过这一分钟，拖到更晚的那条配置（例如 21:30）才补跑。
+    """
+    started = shanghai_local()
+    pending = _run_due_ticks(trigger, started)
+    if pending:
+        return pending
+    finished = shanghai_local()
+    if _same_minute(started, finished):
+        return pending
+    return _run_due_ticks(trigger, finished)
+
+
 def _run_rules_safe(trigger: str, rule_id: str | None = None) -> None:
     db = SessionLocal()
     try:
@@ -979,4 +1000,4 @@ def _loop() -> None:
             break
         if triggered:
             _wake.clear()
-        _run_due_ticks("cron")
+        _dispatch_due_ticks("cron")
