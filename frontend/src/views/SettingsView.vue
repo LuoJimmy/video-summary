@@ -1323,7 +1323,7 @@ const highlightPhrasesText = computed({
         <h3>内容领域</h3>
       </div>
       <div class="grid two">
-        <div class="field field-md">
+        <div class="field field-sm">
           <div class="flex items-center gap-1">
             <Label>预设</Label>
             <Button
@@ -1366,8 +1366,8 @@ const highlightPhrasesText = computed({
             </SelectContent>
           </Select>
         </div>
-        <div class="field field-md">
-          <Label>领域名称</Label>
+        <div class="field field-sm">
+          <Label class="h-6">领域名称</Label>
           <Input v-model="domainPack.name" @input="markDomainCustom" />
         </div>
       </div>
@@ -1386,7 +1386,7 @@ const highlightPhrasesText = computed({
         </Button>
       </div>
       <div v-show="showDomainDetails" class="domain-details">
-        <Label class="mt-3.5">转写提示</Label>
+        <Label class="mt-3.5 mb-2">转写提示</Label>
         <Input
           v-model="domainPack.asr_hint"
           placeholder="以下是简体中文A股盘面课。"
@@ -1651,7 +1651,7 @@ const highlightPhrasesText = computed({
           </Select>
         </div>
         <div class="field field-sm">
-          <Label>配置名称</Label>
+          <Label class="h-6">配置名称</Label>
           <Input v-model="ruleDraft.name" placeholder="例如：B站早班" />
         </div>
       </div>

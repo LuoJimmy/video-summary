@@ -265,7 +265,7 @@ onMounted(refresh);
 
   <section class="card">
     <div class="grid two">
-      <div class="field field-md">
+      <div class="field field-sm">
         <div class="flex items-center gap-1">
           <Label>当前站点</Label>
           <Button
@@ -308,8 +308,8 @@ onMounted(refresh);
           </SelectContent>
         </Select>
       </div>
-      <div v-if="current" class="field field-md">
-        <Label>名称</Label>
+      <div v-if="current" class="field field-sm">
+        <Label class="h-6">名称</Label>
         <Input v-model="current.name" placeholder="站点名称" />
       </div>
     </div>
