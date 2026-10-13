@@ -886,7 +886,9 @@ def _run_due_ticks(trigger: str = "cron", now: datetime | None = None) -> list[s
                 continue
             if due:
                 pending.append(rule.id)
-            else:
+            elif _same_minute(point, stamp):
+                # 只在这条配置自己的触发分钟里留「已跳过」。更晚的配置到点时，
+                # 不要再给已经跑过的配置补一条日志，否则 18:01 的 B 站会在 21:30 又出现一次。
                 notes.append((rule.id, rule.name or "", "这个触发点已经执行过定时任务，本轮到点不再扫描", False))
     except Exception:
         return []

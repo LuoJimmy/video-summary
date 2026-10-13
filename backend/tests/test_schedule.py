@@ -872,6 +872,54 @@ def test_early_wake_still_runs_when_check_crosses_the_trigger_minute(db_session,
     assert stamps == []
 
 
+def test_later_rule_does_not_note_skip_for_an_earlier_rule(db_session, monkeypatch):
+    """18:01 已经跑过的配置，21:30 另一条到点时不再补一条「已跳过」。"""
+    from app.models import Site
+    from app.services import schedule as schedule_service
+
+    TestingSession = sessionmaker(bind=db_session.get_bind(), autoflush=False, autocommit=False)
+    monkeypatch.setattr(schedule_service, "SessionLocal", TestingSession)
+    monkeypatch.setattr(schedule_service, "_skip_logged", set())
+    ran: list[str] = []
+    monkeypatch.setattr(
+        schedule_service,
+        "_safe_run_once",
+        lambda trigger, rule_id="": ran.append(rule_id),
+    )
+    xiaoe = db_session.query(Site).filter(Site.adapter == "xiaoe").one()
+    sites = [ScheduleRuleSiteIn(site_id=xiaoe.id, enabled=False, catalog_id="")]
+    bili = schedule_service.save_rule(
+        db_session,
+        ScheduleRuleIn(name="B站", enabled=True, time="18:01", max_jobs=5, sites=sites),
+    )
+    xiaoe_rule = schedule_service.save_rule(
+        db_session,
+        ScheduleRuleIn(name="小鹅通", enabled=True, time="21:30", max_jobs=5, sites=sites),
+    )
+    ran_at = datetime(2026, 10, 12, 10, 1, tzinfo=timezone.utc)  # 北京 18:01
+    db_session.add(
+        ScheduleLog(
+            trigger="cron",
+            status="ok",
+            summary="B站：新建 2",
+            started_at=ran_at.replace(tzinfo=None),
+            finished_at=ran_at.replace(tzinfo=None),
+            rule_id=bili.id,
+            rule_name="B站",
+        )
+    )
+    db_session.commit()
+    db_session.rollback()
+    evening = datetime(2026, 10, 12, 13, 30, tzinfo=timezone.utc)  # 北京 21:30
+    pending = schedule_service._run_due_ticks("cron", evening)
+    db_session.rollback()
+    assert bili.id not in pending
+    assert bili.id not in ran
+    assert pending == [xiaoe_rule.id]
+    skipped = db_session.query(ScheduleLog).filter(ScheduleLog.status == "skipped").all()
+    assert skipped == []
+
+
 def test_cron_does_not_run_when_schedule_disabled(client, db_session, monkeypatch):
     from app.models import ScheduleLog
     from app.services.schedule import run_once
